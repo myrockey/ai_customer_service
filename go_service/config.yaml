@@ -1,0 +1,29 @@
+# ===== 默认配置（本地 go run 用）=====
+# 容器部署时由环境变量覆盖：mysql.dsn → CS_MYSQL_DSN，agent_url → CS_AGENT_URL，server.port → 固定 8080
+mysql:
+  dsn: "root:123456@tcp(127.0.0.1:3306)/cs_biz_db?charset=utf8mb4&parseTime=True&loc=Local"
+agent_url: "http://127.0.0.1:8000"
+server:
+  port: ":8080"
+# ===== 鉴权与租户隔离 =====
+# enabled: true=产品模式(所有接口需 token)；false=演示模式(放行，兼容旧测试)
+# user_id 约定格式：{tenant_id}:{uid}，消息/工单/会话天然按租户隔离
+# tenants: 种子租户，首次启动写入 DB（tenants 表），此后以 DB 为准（后台可增删）
+# app_secret 以 sha256 哈希存储，仅创建/重置时返回一次明文
+# ⚠️ 安全：app_secret 为占位符，不承载真实凭据。
+#    实际 secret 通过环境变量注入：TENANT_{TENANT_ID大写}_SECRET（如 TENANT_T_ADMIN_SECRET），
+#    由 docker-compose 从 .env 读取（.env 不入 git，模板见 .env.example）。
+#    本地 go run（非容器）时如需登录，请先设置对应环境变量或修改本文件。
+auth:
+  enabled: true
+  token_ttl: "24h"
+  tenants:
+    - tenant_id: "t_admin"
+      name: "平台管理员"
+      app_key: "admin_key"
+      app_secret: "CHANGE_ME"
+      is_platform_admin: true
+    - tenant_id: "t_demo"
+      name: "洛奇之路（演示）"
+      app_key: "demo_key"
+      app_secret: "CHANGE_ME"

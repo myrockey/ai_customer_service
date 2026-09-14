@@ -1,0 +1,397 @@
+# ============================================================================
+# 智能客服系统 CI/CD 流水线
+# 服务：Go网关 + Python Agent + MySQL + Postgres + Qdrant + Nginx + 可观测性
+# 阶段：lint → test → build → docker_build → deploy_staging → deploy_production
+# ============================================================================
+
+# 全局变量
+variables:
+  # Go 配置
+  GOPROXY: "https://goproxy.cn,direct"
+  GOMODCACHE: $CI_PROJECT_DIR/.go_mod_cache
+  GO_VERSION: "1.25-alpine3.24"
+
+  # Python 配置
+  PIP_INDEX_URL: "https://pypi.tuna.tsinghua.edu.cn/simple"
+  PIP_CACHE_DIR: $CI_PROJECT_DIR/.pip_cache
+
+  # 镜像名称（使用 GitLab 容器镜像仓库）
+  GO_IMAGE: $CI_REGISTRY_IMAGE/cs-go:$CI_COMMIT_SHORT_SHA
+  AGENT_IMAGE: $CI_REGISTRY_IMAGE/cs-agent:$CI_COMMIT_SHORT_SHA
+  NGINX_IMAGE: $CI_REGISTRY_IMAGE/cs-nginx:$CI_COMMIT_SHORT_SHA
+
+  # 生产环境镜像标签（latest）
+  GO_IMAGE_LATEST: $CI_REGISTRY_IMAGE/cs-go:latest
+  AGENT_IMAGE_LATEST: $CI_REGISTRY_IMAGE/cs-agent:latest
+  NGINX_IMAGE_LATEST: $CI_REGISTRY_IMAGE/cs-nginx:latest
+
+# 缓存配置
+cache:
+  - key:
+      files:
+        - go_service/go.mod
+    paths:
+      - .go_mod_cache
+    policy: pull-push
+  - key:
+      files:
+        - python_agent/requirements.txt
+    paths:
+      - .pip_cache
+    policy: pull-push
+
+# 流水线阶段
+stages:
+  - lint
+  - test
+  - build
+  - docker_build
+  - deploy_staging
+  - deploy_production
+
+###########################################################################
+# 1. 代码静态检查（强制门禁，失败直接阻断构建）
+###########################################################################
+
+# Go 代码静态检查
+golangci_lint:
+  stage: lint
+  image: golangci/golangci-lint:v2.6.2-alpine
+  variables:
+    GOPROXY: "https://goproxy.cn,direct"
+  script:
+    - cd go_service
+    - golangci-lint run ./... --timeout 5m
+  allow_failure: false
+  only:
+    - merge_requests
+    - main
+    - develop
+
+# Python 代码静态检查
+python_lint:
+  stage: lint
+  image: python:3.13-slim
+  before_script:
+    - pip install ruff flake8
+  script:
+    - cd python_agent
+    - ruff check . --output-format=text
+    - flake8 . --max-line-length=120 --exclude=backups,examples
+  allow_failure: false
+  only:
+    - merge_requests
+    - main
+    - develop
+
+# Dockerfile 语法检查
+dockerfile_lint:
+  stage: lint
+  image: hadolint/hadolint:latest-alpine
+  script:
+    - hadolint go_service/Dockerfile
+    - hadolint python_agent/Dockerfile
+  allow_failure: true
+  only:
+    - merge_requests
+    - main
+    - develop
+
+###########################################################################
+# 2. 单元测试（MR/合流时使用）
+###########################################################################
+
+# Go 单元测试
+go_unit_test:
+  stage: test
+  image: golang:$GO_VERSION
+  variables:
+    GOPROXY: "https://goproxy.cn,direct"
+    GOMODCACHE: $CI_PROJECT_DIR/.go_mod_cache
+  script:
+    - cd go_service
+    - go mod download
+    - go test -v -cover -coverprofile=coverage.out ./...
+    - go tool cover -func=coverage.out | tail -1
+  coverage: '/total:\s+\(statements\)\s+(\d+.\d+)%/'
+  artifacts:
+    paths:
+      - go_service/coverage.out
+    expire_in: 7d
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: go_service/coverage.xml
+  when: on_success
+  only:
+    - merge_requests
+    - main
+    - develop
+
+# Python 单元测试
+python_unit_test:
+  stage: test
+  image: python:3.13-slim
+  variables:
+    PIP_CACHE_DIR: $CI_PROJECT_DIR/.pip_cache
+  before_script:
+    - cd python_agent
+    - pip install -r requirements.txt
+    - pip install pytest pytest-cov
+  script:
+    - pytest --cov=. --cov-report=xml --cov-report=term -v
+  coverage: '/TOTAL.*\s+(\d+%)$/'
+  artifacts:
+    paths:
+      - python_agent/coverage.xml
+    expire_in: 7d
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: python_agent/coverage.xml
+  when: on_success
+  only:
+    - merge_requests
+    - main
+    - develop
+
+###########################################################################
+# 3. 构建二进制（Linux 生产环境）
+###########################################################################
+
+# Go 交叉编译
+build_go_binary:
+  stage: build
+  image: golang:$GO_VERSION
+  variables:
+    GOPROXY: "https://goproxy.cn,direct"
+    GOMODCACHE: $CI_PROJECT_DIR/.go_mod_cache
+  script:
+    - cd go_service
+    - go mod download
+    - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.Version=$CI_COMMIT_SHORT_SHA -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o cs_go_service .
+  artifacts:
+    paths:
+      - go_service/cs_go_service
+    expire_in: 7d
+  only:
+    - main
+    - develop
+    - tags
+
+# Python 依赖完整性检查
+python_dependency_check:
+  stage: build
+  image: python:3.13-slim
+  variables:
+    PIP_CACHE_DIR: $CI_PROJECT_DIR/.pip_cache
+  script:
+    - cd python_agent
+    - pip install -r requirements.txt
+    - pip check
+  only:
+    - main
+    - develop
+    - tags
+
+###########################################################################
+# 4. 构建 Docker 镜像 + 推送镜像仓库
+###########################################################################
+
+# 构建 Go 网关镜像
+build_go_image:
+  stage: docker_build
+  image: docker:26
+  services:
+    - docker:26-dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_BUILDKIT: "1"
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build -f go_service/Dockerfile -t $GO_IMAGE -t $GO_IMAGE_LATEST .
+    - docker push $GO_IMAGE
+    - docker push $GO_IMAGE_LATEST
+  only:
+    - main
+    - develop
+    - tags
+
+# 构建 Python Agent 镜像
+build_agent_image:
+  stage: docker_build
+  image: docker:26
+  services:
+    - docker:26-dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_BUILDKIT: "1"
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build -f python_agent/Dockerfile -t $AGENT_IMAGE -t $AGENT_IMAGE_LATEST .
+    - docker push $AGENT_IMAGE
+    - docker push $AGENT_IMAGE_LATEST
+  only:
+    - main
+    - develop
+    - tags
+
+# 构建 Vue 管理后台（web/admin/dist 被 gitignore，CI 工作区无 dist，必须先构建）
+build_admin_app:
+  stage: build
+  image: node:20-alpine
+  cache:
+    key:
+      files:
+        - admin-app/package-lock.json
+    paths:
+      - admin-app/node_modules
+  script:
+    - cd admin-app
+    - npm install --registry=https://registry.npmmirror.com --no-audit --no-fund
+    - npm run build
+    - ls -la dist
+  artifacts:
+    paths:
+      - web/admin/dist
+    expire_in: 7d
+  only:
+    - main
+    - develop
+    - tags
+
+# 构建 Nginx 镜像（可选，如果需要自定义 Nginx 镜像）
+build_nginx_image:
+  stage: docker_build
+  image: docker:26
+  services:
+    - docker:26-dind
+  needs:
+    - build_admin_app
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - |
+      cat > /tmp/Dockerfile.nginx << 'EOF'
+      FROM nginx:1.27-alpine
+      COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+      COPY web/ /usr/share/nginx/html/web/
+      EXPOSE 80
+      CMD ["nginx", "-g", "daemon off;"]
+      EOF
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build -f /tmp/Dockerfile.nginx -t $NGINX_IMAGE -t $NGINX_IMAGE_LATEST .
+    - docker push $NGINX_IMAGE
+    - docker push $NGINX_IMAGE_LATEST
+  when: manual
+  allow_failure: true
+  only:
+    - main
+    - develop
+
+###########################################################################
+# 5. 部署到测试环境（自动）
+# 部署逻辑统一由服务器上的 deploy/deploy.sh 执行，避免与 CI 内联脚本重复维护
+###########################################################################
+
+deploy_staging:
+  stage: deploy_staging
+  image: alpine:3.20
+  environment:
+    name: staging
+    url: http://staging.example.com
+  before_script:
+    - apk add --no-cache openssh-client
+    - chmod 600 "$STAGING_SSH_PRIVATE_KEY"
+    - echo "StrictHostKeyChecking no" >> /etc/ssh/ssh_config
+  script:
+    - |
+      # 1. 先同步最新部署脚本到服务器（确保脚本是最新版本）
+      scp -i "$STAGING_SSH_PRIVATE_KEY" deploy/deploy.sh $STAGING_SSH_USER@$STAGING_SSH_HOST:/opt/cs-customer-service/deploy/deploy.sh
+      scp -i "$STAGING_SSH_PRIVATE_KEY" deploy/rollback.sh $STAGING_SSH_USER@$STAGING_SSH_HOST:/opt/cs-customer-service/deploy/rollback.sh
+
+      # 2. SSH 远程执行部署脚本（单一数据源，与手动部署行为完全一致）
+      ssh -i "$STAGING_SSH_PRIVATE_KEY" $STAGING_SSH_USER@$STAGING_SSH_HOST <<EOF
+        set -e
+        cd /opt/cs-customer-service
+        chmod +x deploy/deploy.sh deploy/rollback.sh
+
+        # 登录镜像仓库（deploy.sh 内部会拉取镜像，需要先登录）
+        docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
+
+        # 执行统一部署脚本
+        ./deploy/deploy.sh ${GO_IMAGE} ${AGENT_IMAGE}
+      EOF
+  only:
+    - develop
+
+###########################################################################
+# 6. 部署到生产环境（人工确认，仅 main 分支）
+# 部署逻辑统一由服务器上的 deploy/deploy.sh 执行，避免与 CI 内联脚本重复维护
+###########################################################################
+
+deploy_production:
+  stage: deploy_production
+  image: alpine:3.20
+  when: manual
+  allow_failure: false
+  only:
+    - main
+    - tags
+  environment:
+    name: production
+    url: http://production.example.com
+  before_script:
+    - apk add --no-cache openssh-client
+    - chmod 600 "$PROD_SSH_PRIVATE_KEY"
+    - echo "StrictHostKeyChecking no" >> /etc/ssh/ssh_config
+  script:
+    - |
+      # 1. 先同步最新部署脚本到服务器（确保脚本是最新版本）
+      scp -i "$PROD_SSH_PRIVATE_KEY" deploy/deploy.sh $PROD_SSH_USER@$PROD_SSH_HOST:/opt/cs-customer-service/deploy/deploy.sh
+      scp -i "$PROD_SSH_PRIVATE_KEY" deploy/rollback.sh $PROD_SSH_USER@$PROD_SSH_HOST:/opt/cs-customer-service/deploy/rollback.sh
+
+      # 2. SSH 远程执行部署脚本（单一数据源，与手动部署行为完全一致）
+      ssh -i "$PROD_SSH_PRIVATE_KEY" $PROD_SSH_USER@$PROD_SSH_HOST <<EOF
+        set -e
+        cd /opt/cs-customer-service
+        chmod +x deploy/deploy.sh deploy/rollback.sh
+
+        # 登录镜像仓库（deploy.sh 内部会拉取镜像，需要先登录）
+        docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
+
+        # 执行统一部署脚本（包含：预检查/保存版本/数据库备份/拉取镜像/滚动更新/健康检查）
+        ./deploy/deploy.sh ${GO_IMAGE} ${AGENT_IMAGE}
+      EOF
+
+# 生产环境回滚（手动触发）
+# 回滚逻辑统一由服务器上的 deploy/rollback.sh 执行
+rollback_production:
+  stage: deploy_production
+  image: alpine:3.20
+  when: manual
+  allow_failure: false
+  only:
+    - main
+  environment:
+    name: production
+    action: stop
+  before_script:
+    - apk add --no-cache openssh-client
+    - chmod 600 "$PROD_SSH_PRIVATE_KEY"
+    - echo "StrictHostKeyChecking no" >> /etc/ssh/ssh_config
+  script:
+    - |
+      # 1. 先同步最新回滚脚本到服务器
+      scp -i "$PROD_SSH_PRIVATE_KEY" deploy/rollback.sh $PROD_SSH_USER@$PROD_SSH_HOST:/opt/cs-customer-service/deploy/rollback.sh
+
+      # 2. SSH 远程执行回滚脚本（自动回滚到上一个版本）
+      ssh -i "$PROD_SSH_PRIVATE_KEY" $PROD_SSH_USER@$PROD_SSH_HOST <<EOF
+        set -e
+        cd /opt/cs-customer-service
+        chmod +x deploy/rollback.sh
+        # 执行统一回滚脚本（自动读取 .last_good_images 中的上一版本镜像）
+        # 使用 echo y 自动确认回滚（CI 环境无交互）
+        echo "y" | ./deploy/rollback.sh
+      EOF

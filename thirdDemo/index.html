@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XX商城 - 第三方接入示例（SDK 方式）</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+        /* 顶部导航 */
+        .header {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+            color: #fff;
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 2px 8px rgba(0,0,0,.1);
+        }
+        .header .logo { font-size: 22px; font-weight: 700; }
+        .header .nav { display: flex; gap: 24px; }
+        .header .nav a { color: #fff; text-decoration: none; font-size: 14px; opacity: .9; }
+        .header .nav a:hover { opacity: 1; }
+        /* Banner */
+        .banner {
+            background: linear-gradient(135deg, #fff5f5, #ffe8e8);
+            padding: 40px 24px;
+            text-align: center;
+        }
+        .banner h1 { font-size: 28px; color: #ee5a24; margin-bottom: 8px; }
+        .banner p { color: #666; font-size: 14px; }
+        /* 接入说明 */
+        .info-card {
+            max-width: 1200px;
+            margin: 24px auto;
+            padding: 20px 24px;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.06);
+            border-left: 4px solid #1890ff;
+        }
+        .info-card h3 { font-size: 16px; color: #1890ff; margin-bottom: 10px; }
+        .info-card p { font-size: 13px; color: #666; line-height: 1.8; }
+        .info-card code {
+            background: #f0f5ff;
+            color: #1890ff;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        /* SDK API 演示区 */
+        .api-demo {
+            max-width: 1200px;
+            margin: 24px auto;
+            padding: 20px 24px;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.06);
+        }
+        .api-demo h3 { font-size: 16px; color: #333; margin-bottom: 16px; border-left: 4px solid #52c41a; padding-left: 10px; }
+        .api-demo .row { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+        .api-demo button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            background: #1890ff;
+            color: #fff;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background .2s;
+        }
+        .api-demo button:hover { background: #096dd9; }
+        .api-demo button.secondary { background: #f0f0f0; color: #333; }
+        .api-demo button.secondary:hover { background: #d9d9d9; }
+        .api-demo button.success { background: #52c41a; }
+        .api-demo button.success:hover { background: #389e0d; }
+        .api-demo input {
+            padding: 8px 12px;
+            border: 1px solid #d9d9d9;
+            border-radius: 6px;
+            font-size: 13px;
+            flex: 1;
+            min-width: 200px;
+        }
+        .event-log {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border-radius: 6px;
+            padding: 12px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 12px;
+            height: 180px;
+            overflow-y: auto;
+            margin-top: 12px;
+        }
+        .event-log .entry { margin-bottom: 3px; }
+        .event-log .time { color: #6a9955; }
+        .event-log .event { color: #569cd6; font-weight: 600; }
+        .event-log .data { color: #ce9178; }
+        /* 商品列表 */
+        .products {
+            max-width: 1200px;
+            margin: 24px auto;
+            padding: 0 24px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 16px;
+        }
+        .product {
+            background: #fff;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,.06);
+            transition: transform .2s, box-shadow .2s;
+        }
+        .product:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,.1); }
+        .product .img {
+            height: 160px;
+            background: linear-gradient(135deg, #ffeaa7, #fdcb6e);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 48px;
+        }
+        .product .info { padding: 14px; }
+        .product .name { font-size: 14px; color: #333; margin-bottom: 8px; }
+        .product .price { font-size: 18px; color: #f5222d; font-weight: 600; }
+        .product .price small { font-size: 12px; color: #999; text-decoration: line-through; font-weight: 400; margin-left: 6px; }
+        /* 页脚 */
+        .footer {
+            text-align: center;
+            padding: 24px;
+            color: #999;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+
+<!-- 顶部导航 -->
+<div class="header">
+    <div class="logo">🛒 XX商城</div>
+    <div class="nav">
+        <a href="#">首页</a>
+        <a href="#">商品分类</a>
+        <a href="#">我的订单</a>
+        <a href="#">个人中心</a>
+    </div>
+</div>
+
+<!-- Banner -->
+<div class="banner">
+    <h1>🎉 限时特惠 全场5折起</h1>
+    <p>新人专享礼包 · 满199减50 · 顺丰包邮</p>
+</div>
+
+<!-- 接入说明 -->
+<div class="info-card">
+    <h3>📌 这是第三方接入示例页面（SDK 方式）</h3>
+    <p>
+        本页面模拟一个电商网站，演示如何通过 <strong>SDK（cs-chat.js）</strong> 接入智能客服系统。<br>
+        右下角 <strong>💬 客服</strong> 按钮由 SDK 自动渲染，点击即可打开客服对话窗口。<br>
+        接入流程：服务端用 <code>app_key/app_secret</code> 换 token → 前端引入 SDK 并传入 token →
+        SDK 自动管理浮窗按钮、弹窗、WebSocket 连接、消息收发。<br>
+        SDK 内部用 iframe 加载 <code>pc.html</code>，对外提供 <code>open/close/sendText/on</code> 等 API。
+    </p>
+</div>
+
+<!-- SDK API 演示区 -->
+<div class="api-demo">
+    <h3>🔧 SDK API 演示</h3>
+    <div class="row">
+        <button onclick="CSCHAT.open()">打开客服</button>
+        <button onclick="CSCHAT.close()" class="secondary">关闭客服</button>
+        <button onclick="CSCHAT.toggle()" class="secondary">切换开关</button>
+        <button onclick="CSCHAT.sendText('你好，我想咨询一下商品')" class="success">发送：你好</button>
+        <button onclick="CSCHAT.sendText('怎么申请退款？')" class="success">发送：退款</button>
+        <button onclick="CSCHAT.sendText('转人工客服')" class="success">发送：转人工</button>
+    </div>
+    <div class="row">
+        <input type="text" id="customMsg" placeholder="输入自定义消息，点击发送..." />
+        <button onclick="sendCustomMsg()">发送自定义消息</button>
+    </div>
+    <div class="row">
+        <span style="font-size:13px;color:#666;">当前 user_id：</span>
+        <code id="currentUid" style="background:#f6f8fa;padding:2px 8px;border-radius:4px;font-size:12px;">加载中...</code>
+        <span style="font-size:13px;color:#666;margin-left:16px;">窗口状态：</span>
+        <code id="openStatus" style="background:#f6f8fa;padding:2px 8px;border-radius:4px;font-size:12px;">未打开</code>
+    </div>
+    <h4 style="font-size:13px;color:#666;margin:12px 0 6px;">📋 SDK 事件日志</h4>
+    <div class="event-log" id="eventLog"></div>
+</div>
+
+<!-- 商品列表 -->
+<div class="products">
+    <div class="product">
+        <div class="img">📱</div>
+        <div class="info">
+            <div class="name">智能手机 Pro Max 256G</div>
+            <div class="price">¥3999 <small>原价¥5999</small></div>
+        </div>
+    </div>
+    <div class="product">
+        <div class="img">💻</div>
+        <div class="info">
+            <div class="name">轻薄笔记本电脑 14寸</div>
+            <div class="price">¥4599 <small>原价¥6299</small></div>
+        </div>
+    </div>
+    <div class="product">
+        <div class="img">🎧</div>
+        <div class="info">
+            <div class="name">无线降噪蓝牙耳机</div>
+            <div class="price">¥599 <small>原价¥899</small></div>
+        </div>
+    </div>
+    <div class="product">
+        <div class="img">⌚</div>
+        <div class="info">
+            <div class="name">智能运动手表 GPS版</div>
+            <div class="price">¥1299 <small>原价¥1799</small></div>
+        </div>
+    </div>
+    <div class="product">
+        <div class="img">📷</div>
+        <div class="info">
+            <div class="name">微单相机 套机 16-50mm</div>
+            <div class="price">¥5499 <small>原价¥7299</small></div>
+        </div>
+    </div>
+    <div class="product">
+        <div class="img">🎮</div>
+        <div class="info">
+            <div class="name">游戏手柄 无线蓝牙版</div>
+            <div class="price">¥299 <small>原价¥399</small></div>
+        </div>
+    </div>
+    <div class="product">
+        <div class="img">🔌</div>
+        <div class="info">
+            <div class="name">65W 氮化镓快充充电器</div>
+            <div class="price">¥129 <small>原价¥199</small></div>
+        </div>
+    </div>
+    <div class="product">
+        <div class="img">🖱️</div>
+        <div class="info">
+            <div class="name">人体工学无线鼠标</div>
+            <div class="price">¥199 <small>原价¥299</small></div>
+        </div>
+    </div>
+</div>
+
+<!-- 页脚 -->
+<div class="footer">
+    © 2026 XX商城 示例网站 · 智能客服系统第三方接入演示（SDK 方式）
+</div>
+
+<!-- ============ 引入智能客服 SDK ============ -->
+<!-- 方式一：data-* 自动初始化（最简单） -->
+<!-- 注意：生产环境 token 应由服务端换取后注入，不要在前端暴露 app_secret -->
+<script src="http://localhost:8080/sdk/cs-chat.js"
+        data-server="http://localhost:8080"
+        data-title="XX商城客服"
+        data-theme="#ee5a24"
+        data-button-icon="💬"
+        data-button-text="客服"
+        data-position="right"
+        data-width="380"
+        data-height="560"
+        data-manual="true">
+</script>
+
+<script>
+// ============ SDK 初始化（手动方式，推荐） ============
+// 从本服务端获取 token（main.go 中的 /get-token 接口）
+// 生产环境：token 由后端用 app_key/app_secret 换取，前端只持有短期 token
+async function initCustomerService() {
+    try {
+        logEvent('system', '正在从服务端获取 token...');
+        const resp = await fetch('/get-token');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+
+        logEvent('system', 'Token 获取成功，tenant=' + (data.tenant_id || 'unknown'));
+
+        // 初始化 SDK
+        CSCHAT.init({
+            server: 'http://localhost:8080',
+            token: data.token,
+            tenant_id: data.tenant_id,
+            title: 'XX商城客服',
+            theme: '#ee5a24',
+            position: 'right',
+            width: 380,
+            height: 560,
+            button_icon: '💬',
+            button_text: '客服'
+        });
+
+        logEvent('system', 'SDK 初始化完成');
+
+        // 显示 user_id
+        setTimeout(function() {
+            document.getElementById('currentUid').textContent = CSCHAT.getUserId() || '未生成';
+        }, 500);
+
+    } catch (err) {
+        console.error('[CS] 初始化失败:', err);
+        logEvent('error', 'SDK 初始化失败: ' + err.message);
+    }
+}
+
+// ============ SDK 事件监听 ============
+CSCHAT.on('ready', function(data) {
+    logEvent('ready', '聊天就绪 user_id=' + data.user_id + ' tenant=' + data.tenant_id);
+    document.getElementById('currentUid').textContent = data.user_id;
+});
+
+CSCHAT.on('open', function() {
+    logEvent('open', '客服窗口打开');
+    document.getElementById('openStatus').textContent = '已打开';
+    document.getElementById('openStatus').style.color = '#52c41a';
+});
+
+CSCHAT.on('close', function() {
+    logEvent('close', '客服窗口关闭');
+    document.getElementById('openStatus').textContent = '已关闭';
+    document.getElementById('openStatus').style.color = '#999';
+});
+
+CSCHAT.on('message', function(data) {
+    logEvent('message', data.role + ': ' + (data.content || '').substring(0, 60));
+});
+
+CSCHAT.on('handoff', function(data) {
+    logEvent('handoff', '转人工成功 工单号=' + data.ticket_no);
+});
+
+CSCHAT.on('human', function(data) {
+    logEvent('human', '人工客服接入: ' + data.msg);
+});
+
+CSCHAT.on('error', function(data) {
+    logEvent('error', data.msg);
+});
+
+// ============ 工具函数 ============
+function logEvent(type, msg) {
+    const log = document.getElementById('eventLog');
+    const time = new Date().toLocaleTimeString();
+    const entry = document.createElement('div');
+    entry.className = 'entry';
+    entry.innerHTML = '<span class="time">[' + time + ']</span> <span class="event">' + type + '</span> <span class="data">' + msg + '</span>';
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+}
+
+function sendCustomMsg() {
+    const input = document.getElementById('customMsg');
+    if (input.value.trim()) {
+        CSCHAT.sendText(input.value.trim());
+        logEvent('api', '调用 sendText: ' + input.value.trim());
+        input.value = '';
+    }
+}
+
+// 页面加载完成后初始化 SDK
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initCustomerService);
+} else {
+    initCustomerService();
+}
+</script>
+
+</body>
+</html>

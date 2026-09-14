@@ -1,0 +1,19 @@
+.git/
+.gitignore
+deploy/
+!deploy/nginx.conf
+# nginx.Dockerfile 多阶段构建需要 admin-app 源码（go 镜像仅 COPY go_service/，不受影响）
+!admin-app/
+!admin-app/**
+admin-app/node_modules/
+admin-app/dist/
+python_agent/venv/
+python_agent/chroma_db/
+python_agent/__pycache__/
+python_agent/*.pyc
+python_agent/agent.log
+scripts/
+docs/
+*.exe
+*.exe~
+*.bak

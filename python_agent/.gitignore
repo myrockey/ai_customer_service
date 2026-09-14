@@ -1,0 +1,9 @@
+# .gitignore
+.env
+__pycache__/
+*.pyc
+venv/
+chroma_db/
+*.log
+backups/
+*.bak

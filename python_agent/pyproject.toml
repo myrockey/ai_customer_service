@@ -1,0 +1,39 @@
+# Ruff 配置
+# 运行：ruff check .
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "TCH", # flake8-type-checking
+    "RUF", # ruff-specific rules
+]
+ignore = [
+    "E501",  # line too long (由 line-length 控制)
+    "B008",  # function call in default argument
+    "UP006", # use `list` instead of `List` (Python 3.9+)
+    "UP007", # use `X | Y` instead of `Union` (Python 3.10+)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"main.py" = ["B008", "E402"]
+"backups/*" = ["ALL"]
+"examples/*" = ["ALL"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["config", "models", "cache", "tools", "logger"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

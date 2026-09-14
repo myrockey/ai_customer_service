@@ -1,0 +1,60 @@
+# golangci-lint 配置
+# 运行：golangci-lint run ./...
+
+run:
+  timeout: 5m
+  tests: true
+  go: "1.25"
+
+linters:
+  enable:
+    - errcheck        # 检查未处理的错误
+    - gosimple        # 简化代码
+    - govet           # Go  vet 检查
+    - ineffassign     # 检查无效赋值
+    - staticcheck     # 静态分析
+    - unused          # 检查未使用的代码
+    - gofmt           # 代码格式
+    - goimports        # import 排序
+    - misspell        # 拼写检查
+    - unconvert       # 不必要的类型转换
+    - prealloc        # 切片预分配
+    - nilerr          # 返回 nil error 的检查
+    - noctx           # 缺少 context 的 HTTP 请求
+    - errorlint       # error 类型断言检查
+    - bodyclose       # HTTP response body 关闭检查
+    - gosec           # 安全检查
+  disable:
+    - typecheck       # 类型检查（编译时已检查）
+    - exhaustivestruct # 结构体字段穷尽检查（太严格）
+    - wrapcheck       # error 包装检查（太严格）
+
+linters-settings:
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes: customer_service
+  govet:
+    check-shadowing: true
+  gosec:
+    excludes:
+      - G104  # 未检查的错误（errcheck 已覆盖）
+      - G306  # 文件权限（0644 是合理的）
+  misspell:
+    locale: US
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gosec
+        - noctx
+        - errcheck
+    - path: internal/middleware/
+      linters:
+        - gosec
+  max-issues-per-linter: 0
+  max-same-issues: 0

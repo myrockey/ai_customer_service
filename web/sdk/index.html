@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智能客服 - 多端接入示例</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f5f7fa; color: #333; }
+  .nav { background: #fff; padding: 14px 40px; box-shadow: 0 2px 8px rgba(0,0,0,.06); display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+  .nav h1 { font-size: 18px; color: #1890ff; }
+  .nav .links { display: flex; gap: 20px; }
+  .nav .links a { color: #666; text-decoration: none; font-size: 14px; }
+  .nav .links a:hover { color: #1890ff; }
+  .banner { background: linear-gradient(135deg, #1890ff, #096dd9); color: #fff; padding: 40px; text-align: center; }
+  .banner h2 { font-size: 28px; margin-bottom: 8px; }
+  .banner p { font-size: 14px; opacity: .9; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px 40px; }
+  .steps { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+  .step { flex: 1; min-width: 200px; background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,.06); position: relative; }
+  .step .num { position: absolute; top: -10px; left: 16px; background: #1890ff; color: #fff; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; }
+  .step h4 { font-size: 14px; color: #333; margin-bottom: 6px; margin-top: 4px; }
+  .step p { font-size: 12px; color: #999; line-height: 1.6; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; background: #fff; padding: 6px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.06); flex-wrap: wrap; }
+  .tab { padding: 10px 20px; border: none; background: transparent; color: #666; font-size: 14px; cursor: pointer; border-radius: 6px; transition: all .2s; display: flex; align-items: center; gap: 6px; }
+  .tab:hover { background: #f0f5ff; color: #1890ff; }
+  .tab.active { background: #1890ff; color: #fff; }
+  .tab .icon { font-size: 16px; }
+  .code-panel { background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,.06); margin-bottom: 24px; }
+  .code-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: #fafafa; border-bottom: 1px solid #eee; }
+  .code-header .title { font-size: 14px; font-weight: 600; color: #333; }
+  .copy-btn { padding: 6px 14px; border: 1px solid #d9d9d9; background: #fff; color: #666; font-size: 12px; border-radius: 4px; cursor: pointer; transition: all .2s; }
+  .copy-btn:hover { border-color: #1890ff; color: #1890ff; }
+  .copy-btn.copied { background: #52c41a; color: #fff; border-color: #52c41a; }
+  .code-body { padding: 16px; background: #1e1e1e; overflow-x: auto; max-height: 500px; overflow-y: auto; }
+  .code-body pre { margin: 0; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 13px; line-height: 1.6; color: #d4d4d4; white-space: pre; }
+  .desc { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,.06); margin-bottom: 24px; }
+  .desc h3 { font-size: 16px; color: #333; margin-bottom: 12px; border-left: 4px solid #1890ff; padding-left: 10px; }
+  .desc ul { padding-left: 20px; }
+  .desc li { font-size: 13px; color: #666; line-height: 2; }
+  .desc li code { background: #f0f5ff; color: #1890ff; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+  .demo-section { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,.06); margin-bottom: 24px; }
+  .demo-section h3 { font-size: 16px; color: #333; margin-bottom: 12px; border-left: 4px solid #52c41a; padding-left: 10px; }
+  .demo-section p { font-size: 13px; color: #666; margin-bottom: 12px; }
+  .demo-btns { display: flex; gap: 10px; flex-wrap: wrap; }
+  .demo-btns button { padding: 8px 16px; border: none; border-radius: 6px; background: #1890ff; color: #fff; font-size: 13px; cursor: pointer; }
+  .demo-btns button:hover { background: #096dd9; }
+  .demo-btns button.secondary { background: #f0f0f0; color: #333; }
+  .demo-btns button.secondary:hover { background: #d9d9d9; }
+  .footer { background: #fff; padding: 20px 40px; text-align: center; color: #999; font-size: 12px; border-top: 1px solid #eee; margin-top: 40px; }
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <h1>🤖 智能客服系统</h1>
+  <div class="links">
+    <a href="#show">示例代码</a>
+    <a href="#demo">实时演示</a>
+  </div>
+</div>
+
+<div class="banner" id="show">
+  <h2>多端接入示例代码</h2>
+  <p>PC / H5 / Android / iOS / 微信小程序 五端接入完整代码，一键复制即用</p>
+</div>
+
+<div class="container">
+
+  <div class="steps">
+    <div class="step"><div class="num">1</div><h4>创建租户</h4><p>在管理后台创建租户，获取 app_key 和 app_secret</p></div>
+    <div class="step"><div class="num">2</div><h4>服务端换 Token</h4><p>用 app_key/app_secret 调用 /api/auth/token 换取 access_token</p></div>
+    <div class="step"><div class="num">3</div><h4>前端接入</h4><p>PC 用 SDK 浮窗，移动端用 h5/chat.html 全屏页面</p></div>
+    <div class="step"><div class="num">4</div><h4>用户身份</h4><p>user_id 格式 {tenant_id}:{uid}，同一用户固定不变</p></div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('pc', this)"><span class="icon">💻</span> PC 网站</button>
+    <button class="tab" onclick="switchTab('h5', this)"><span class="icon">📱</span> H5 网页</button>
+    <button class="tab" onclick="switchTab('android', this)"><span class="icon">🤖</span> Android</button>
+    <button class="tab" onclick="switchTab('ios', this)"><span class="icon">🍎</span> iOS</button>
+    <button class="tab" onclick="switchTab('mini', this)"><span class="icon">💬</span> 微信小程序</button>
+  </div>
+
+  <div class="code-panel" id="panel-pc">
+    <div class="code-header">
+      <span class="title">💻 PC 网站接入（SDK 浮窗模式，推荐）</span>
+      <button class="copy-btn" onclick="copyCode('pc', this)">复制代码</button>
+    </div>
+    <div class="code-body"><pre id="code-pc">加载中...</pre></div>
+  </div>
+
+  <div class="code-panel" id="panel-h5" style="display:none">
+    <div class="code-header">
+      <span class="title">📱 H5 网页接入（全屏客服页面）</span>
+      <button class="copy-btn" onclick="copyCode('h5', this)">复制代码</button>
+    </div>
+    <div class="code-body"><pre id="code-h5">加载中...</pre></div>
+  </div>
+
+  <div class="code-panel" id="panel-android" style="display:none">
+    <div class="code-header">
+      <span class="title">🤖 Android App 接入（WebView）</span>
+      <button class="copy-btn" onclick="copyCode('android', this)">复制代码</button>
+    </div>
+    <div class="code-body"><pre id="code-android">加载中...</pre></div>
+  </div>
+
+  <div class="code-panel" id="panel-ios" style="display:none">
+    <div class="code-header">
+      <span class="title">🍎 iOS App 接入（WKWebView）</span>
+      <button class="copy-btn" onclick="copyCode('ios', this)">复制代码</button>
+    </div>
+    <div class="code-body"><pre id="code-ios">加载中...</pre></div>
+  </div>
+
+  <div class="code-panel" id="panel-mini" style="display:none">
+    <div class="code-header">
+      <span class="title">💬 微信小程序接入（web-view）</span>
+      <button class="copy-btn" onclick="copyCode('mini', this)">复制代码</button>
+    </div>
+    <div class="code-body"><pre id="code-mini">加载中...</pre></div>
+  </div>
+
+  <div class="desc">
+    <h3>⚠️ 接入注意事项</h3>
+    <ul>
+      <li><strong>user_id 必须带租户前缀</strong>：格式为 <code>{tenant_id}:{uid}</code>，否则鉴权失败（如 <code>t_demo:user_12345</code>）</li>
+      <li><strong>app_secret 只能存在服务端</strong>：前端不能暴露 app_secret，必须通过后端换 token 后传给前端</li>
+      <li><strong>PC 端用 SDK</strong>：引入 <code>cs-chat.js</code>，自动渲染浮窗按钮，体验最好</li>
+      <li><strong>移动端用 h5/chat.html</strong>：全屏页面，已适配安全区域、触摸优化、返回按钮</li>
+      <li><strong>token 有效期 24 小时</strong>：建议服务端缓存 token，提前 30 分钟刷新</li>
+      <li><strong>小程序需要配置业务域名</strong>：在微信公众平台添加客服系统域名到白名单</li>
+      <li><strong>App WebView 必须开启 JS 和 DOM 存储</strong>：否则页面无法正常运行</li>
+      <li><strong>SDK 版本化（P1-5）</strong>：推荐用带版本号的 URL <code>/sdk/cs-chat@2.0.0.js</code>（服务端已配置别名，始终指向当前版本）。SDK 升级后只需修改 URL 中的版本号，即可强制刷新第三方浏览器缓存，避免旧代码残留</li>
+    </ul>
+  </div>
+
+  <div class="demo-section" id="demo">
+    <h3>🎮 实时演示（PC 端 SDK）</h3>
+    <p>右下角 💬客服 按钮由 SDK 自动渲染，点击可体验完整客服对话。下方按钮可测试 SDK API。</p>
+    <div class="demo-btns">
+      <button onclick="CSCHAT.open()">打开客服</button>
+      <button onclick="CSCHAT.close()" class="secondary">关闭客服</button>
+      <button onclick="CSCHAT.toggle()" class="secondary">切换</button>
+      <button onclick="CSCHAT.sendText('你好，我想咨询一下')">发送：你好</button>
+      <button onclick="CSCHAT.sendText('怎么申请退款？')">发送：退款</button>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  © 2026 智能客服系统 · 多端接入示例页面 · 技术支持：2771452556@qq.com
+</div>
+
+<!-- 代码示例内容（单独文件，避免 </script> 冲突） -->
+<script src="/sdk/demo-codes.js"></script>
+
+<!-- 引入 SDK（PC 端实时演示） -->
+<script src="/sdk/cs-chat@2.0.0.js"
+        data-title="在线客服"
+        data-theme="#1890ff"
+        data-button-icon="💬"
+        data-button-text="客服"
+        data-manual="true">
+</script>
+
+<script>
+// ============ Tab 切换 ============
+function switchTab(tab, btn) {
+  ['pc', 'h5', 'android', 'ios', 'mini'].forEach(function(t) {
+    document.getElementById('panel-' + t).style.display = 'none';
+  });
+  document.getElementById('panel-' + tab).style.display = 'block';
+  document.querySelectorAll('.tab').forEach(function(b) { b.classList.remove('active'); });
+  btn.classList.add('active');
+}
+
+// ============ 复制代码 ============
+function copyCode(tab, btn) {
+  const code = window.CODE_EXAMPLES[tab];
+  navigator.clipboard.writeText(code).then(function() {
+    btn.textContent = '已复制 ✓';
+    btn.classList.add('copied');
+    setTimeout(function() {
+      btn.textContent = '复制代码';
+      btn.classList.remove('copied');
+    }, 2000);
+  }).catch(function() {
+    const textarea = document.createElement('textarea');
+    textarea.value = code;
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+    btn.textContent = '已复制 ✓';
+    btn.classList.add('copied');
+    setTimeout(function() {
+      btn.textContent = '复制代码';
+      btn.classList.remove('copied');
+    }, 2000);
+  });
+}
+
+// ============ 初始化代码展示 ============
+['pc', 'h5', 'android', 'ios', 'mini'].forEach(function(t) {
+  document.getElementById('code-' + t).textContent = window.CODE_EXAMPLES[t];
+});
+
+// ============ SDK 实时演示初始化 ============
+async function initDemoSDK() {
+  try {
+    // 同域相对路径：demo 页与客服系统同源部署时自动指向当前域名/端口
+    const resp = await fetch('/api/auth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app_key: 'demo_key', app_secret: 'demo_secret' })
+    });
+    const data = await resp.json();
+    if (data.code === 0 && data.data) {
+      CSCHAT.init({
+        server: '',  // 空 = 自动推导当前页面域名/端口（location.origin）
+        token: data.data.token,
+        tenant_id: data.data.tenant_id,
+        title: '在线客服',
+        theme: '#1890ff',
+        button_icon: '💬',
+        button_text: '客服'
+      });
+    }
+  } catch (e) {
+    console.error('SDK 初始化失败:', e);
+  }
+}
+initDemoSDK();
+</script>
+
+</body>
+</html>

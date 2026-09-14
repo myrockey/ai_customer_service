@@ -1,0 +1,39 @@
+# .gitignore
+.env
+**/.env
+__pycache__/
+*.pyc
+
+# 商业版内容（不随开源仓库发布）
+deploy/push-to-acr.sh
+deploy/deploy.sh
+deploy/rollback.sh
+deploy/production/
+deploy/backup/
+deploy/observability/
+
+# 备份产物（本地/服务器生成，不入库）
+backups/
+
+# 部署打包产物
+dist/
+*.tar.gz
+
+# 临时文件
+tmp_*.png
+tmp_*.jpg
+_tmp_env.sh
+/tmp/
+
+# 镜像版本文件（由push-to-acr.sh自动生成）
+.image_versions
+.last_good_images
+
+# Node 依赖
+node_modules/
+
+# RSA 私钥（运行时生成，禁止入库）
+data/
+
+# 一次性临时脚本（不跟踪）
+scripts/_*.sh

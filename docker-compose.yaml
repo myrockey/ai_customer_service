@@ -1,0 +1,378 @@
+# ============================================================================
+# 智能客服系统 - 生产环境一键部署
+# 用法：
+#   1. 复制 .env.example 为 .env，修改配置
+#   2. docker compose up -d
+#   3. 访问 http://localhost:8080
+#
+# 说明：
+#   - 所有镜像从镜像仓库拉取，无需本地构建
+#   - 数据持久化到命名卷，删除容器不丢失数据
+#   - 可观测性服务（Prometheus/Grafana/Loki/Jaeger）默认不启动
+#     如需启动：docker compose --profile observability up -d
+# ============================================================================
+
+name: cs-customer-service
+
+services:
+  # ==========================================================================
+  # 基础服务：Redis + MySQL + PostgreSQL + Qdrant
+  # ==========================================================================
+  
+  # Redis（强制依赖：登录限流 / Token 黑名单 / 模型配置缓存失效广播 / 定时任务锁）
+  # 说明：AOF 持久化 + LRU 256MB；数据在 cs_redis_data 卷内。
+  #       生产建议使用云 Redis（高可用）或主从+Sentinel 替代本单实例，避免单点故障
+  redis:
+    image: redis:7-alpine
+    container_name: cs_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - cs_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - cs-network
+  mysql:
+    image: mysql:8.4
+    container_name: cs_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-cs_biz_db}
+      TZ: Asia/Shanghai
+    volumes:
+      - cs_mysql_data:/var/lib/mysql
+      - ./deploy/init/mysql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-123456}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 40s
+    networks:
+      - cs-network
+    ports:
+      - "3306:3306"
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: cs_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cs_pass123}
+      POSTGRES_DB: ${POSTGRES_DB:-cs_agent_db}
+      POSTGRES_USER: ${POSTGRES_USER:-cs_user}
+      TZ: Asia/Shanghai
+    volumes:
+      - cs_postgres_data:/var/lib/postgresql/data
+      - ./deploy/init/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cs_user} -d ${POSTGRES_DB:-cs_agent_db}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - cs-network
+    ports:
+      - "5432:5432"
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: cs_qdrant
+    restart: unless-stopped
+    volumes:
+      - cs_qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    networks:
+      - cs-network
+
+  # ==========================================================================
+  # 业务服务：Agent + Go 网关 + Nginx
+  # ==========================================================================
+  agent:
+    build: ./python_agent
+    container_name: cs_agent
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    volumes:
+      # 知识库原文件共享卷（agent 写入，nginx 静态服务下载/预览）
+      - cs_kb_files:/app/data/kb_files
+    environment:
+      # PROD_MODE: "true"
+      SESSION_RETENTION_DAYS: "7"
+      SESSION_CLEANUP_INTERVAL: "21600"
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-cs_internal_token_2026_secure}
+      # 容器内使用服务名连接（覆盖 .env 中宿主机视角的 127.0.0.1 配置）
+      POSTGRES_DSN: postgresql://${POSTGRES_USER:-cs_user}:${POSTGRES_PASSWORD:-cs_pass123}@postgres:5432/${POSTGRES_DB:-cs_agent_db}
+      QDRANT_URL: http://qdrant:6333
+      # Qdrant 配置
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: "6333"
+      # Go 业务接口：容器内用服务名直连（覆盖 .env 中 172.22.64.1/WSL 宿主 IP，生产必须）
+      GO_BUSINESS_API: http://go:8080
+      # Redis（强制依赖）：缓存失效广播订阅 / 定时任务锁
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/docs', timeout=3)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    networks:
+      - cs-network
+
+  go:
+    build:
+      context: .
+      dockerfile: go_service/Dockerfile
+    container_name: cs_go
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      # PROD_MODE: "true"
+      CS_MYSQL_DSN: "root:${MYSQL_ROOT_PASSWORD:-123456}@tcp(mysql:3306)/${MYSQL_DATABASE:-cs_biz_db}?charset=utf8mb4&parseTime=True&loc=Local"
+      CS_AGENT_URL: "http://agent:8000"
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-cs_internal_token_2026_secure}
+      # Redis（强制依赖）：登录限流 / Token 黑名单 / 模型配置缓存失效广播
+      REDIS_ADDR: "redis:6379"
+      # P0-4：数据库 API Key 的 AES 加密主密钥（必须配置，缺失时生产模式拒绝启动）
+      MODEL_KEY_ENCRYPT_KEY: ${MODEL_KEY_ENCRYPT_KEY:?MODEL_KEY_ENCRYPT_KEY 未配置}
+      # P0-3：CORS 跨域白名单（逗号分隔）
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
+      # 链路追踪（可选，默认关闭）
+      OTEL_SERVICE_NAME: "customer-service-go"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+      OTEL_TRACES_SAMPLER_ARG: "0.1"
+    volumes:
+      # RSA 私钥持久化（登录加密；生产务必备份该目录，更换密钥会导致已缓存公钥失效）
+      - ./data:/app/data
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/api/auth/tenants || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - cs-network
+
+  nginx:
+    # 多阶段构建：容器内编译 admin-app 前端 + 打包 web/ 静态资源，
+    # 无需在宿主机预先执行 scripts/build_admin_app.sh（见 nginx.Dockerfile）
+    build:
+      context: .
+      dockerfile: nginx.Dockerfile
+    container_name: cs_nginx
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    volumes:
+      # nginx.conf 保留挂载：改配置后 docker exec cs_nginx nginx -s reload 即时生效
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # 知识库原文件共享卷（与 agent 同一卷，静态服务 /kb_files/）
+      - cs_kb_files:/usr/share/nginx/html/kb_files
+    depends_on:
+      - go
+    networks:
+      - cs-network
+
+  # ==========================================================================
+  # P0-5：定时备份服务（每日备份 MySQL/PG/Qdrant + 保留 N 天）
+  # 备份目录 ./backups 建议挂载到宿主机目录或 NAS；日志见 ./backups/backup.log
+  # 默认每日 02:30 执行，可用 BACKUP_CRON 覆盖；BACKUP_RETENTION_DAYS 控制保留天数
+  # ==========================================================================
+  # backup:
+  #   image: alpine:3.20
+  #   container_name: cs_backup
+  #   restart: unless-stopped
+  #   environment:
+  #     BACKUP_CONTAINER_MODE: "1"
+  #     BACKUP_CRON: ${BACKUP_CRON:-30 2 * * *}
+  #     BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+  #     MYSQL_HOST: mysql
+  #     MYSQL_USER: root
+  #     MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+  #     MYSQL_DATABASE: ${MYSQL_DATABASE:-cs_biz_db}
+  #     PG_HOST: postgres
+  #     PG_USER: ${POSTGRES_USER:-cs_user}
+  #     PG_PASSWORD: ${POSTGRES_PASSWORD:-cs_pass123}
+  #     PG_DATABASE: ${POSTGRES_DB:-cs_agent_db}
+  #     QDRANT_HOST: qdrant
+  #     QDRANT_PORT: "6333"
+  #   volumes:
+  #     - ./backup:/backup:ro
+  #     - ./backups:/backups
+  #   command: ["/bin/sh", "/backup/entrypoint.sh"]
+  #   depends_on:
+  #     mysql:
+  #       condition: service_healthy
+  #     postgres:
+  #       condition: service_healthy
+  #     qdrant:
+  #       condition: service_healthy
+  #   networks:
+  #     - cs-network
+
+  # ==========================================================================
+  # 可观测性服务（可选，通过 profile 启动）
+  # 启动方式：docker compose --profile observability up -d
+  # ==========================================================================
+  # ============ P3-1 统一日志收集：Loki + Promtail ============
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: cs_loki
+    restart: unless-stopped
+    profiles: ["observability"]
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./deploy/observability/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - cs_loki_data:/loki
+    ports:
+      - "3100:3100"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - cs-network
+
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: cs_promtail
+    restart: unless-stopped
+    profiles: ["observability"]
+    command: -config.file=/etc/promtail/config.yaml
+    volumes:
+      - ./deploy/observability/promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    networks:
+      - cs-network   
+
+  # ============ P3-2 监控告警：Prometheus + Grafana ============
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: cs_prometheus
+    restart: unless-stopped
+    profiles: ["observability"]
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/observability/alerts.yml:/etc/prometheus/rules/alerts.yml:ro
+      - cs_prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - go
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9090/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cs-network
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: cs_grafana
+    restart: unless-stopped
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin123}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/customer-service-overview.json
+    volumes:
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - cs_grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cs-network
+
+  # ============ P3-3 链路追踪：Jaeger ============
+  jaeger:
+    image: jaegertracing/all-in-one:1.56
+    container_name: cs_jaeger
+    restart: unless-stopped
+    profiles: ["observability"]
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      COLLECTOR_OTLP_HTTP_PORT: "4318"
+      SPAN_STORAGE_TYPE: "memory"
+      MEMORY_MAX_TRACES: "10000"
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4318:4318"    # OTLP HTTP
+      - "4317:4317"    # OTLP gRPC
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:16686/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cs-network
+
+# ==========================================================================
+# 数据卷（持久化存储）
+# ==========================================================================
+volumes:
+  cs_mysql_data:
+  cs_redis_data:
+  cs_postgres_data:
+  cs_qdrant_data:
+  cs_loki_data:
+  cs_prometheus_data:
+  cs_grafana_data:
+  # 知识库原文件共享卷（agent 写入 /app/data/kb_files，nginx 静态服务 /kb_files/）
+  cs_kb_files:
+
+# ==========================================================================
+# 网络
+# ==========================================================================
+networks:
+  cs-network:
+    driver: bridge

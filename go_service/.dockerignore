@@ -1,0 +1,4 @@
+cs_go_service.exe
+cs_go_service.exe~
+*.bak
+run_go.bat

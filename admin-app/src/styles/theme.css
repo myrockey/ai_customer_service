@@ -1,0 +1,50 @@
+// ============ 设计令牌：主题 CSS 变量 ============
+// 主题切换：theme.js 将预设色板写入 document.documentElement.style
+// 浅色主题（默认）与暗色主题共用同一套变量名
+
+:root {
+  /* 默认主题：现代蓝（参考小米控制台浅色风格） */
+  --c-primary: #2563eb;
+  --c-primary-hover: #1d4ed8;
+  --c-primary-weak: #eff6ff;
+  --c-bg: #f5f6f8;
+  --c-card: #ffffff;
+  --c-border: #e5e7eb;
+  --c-border-strong: #d1d5db;
+  --c-text: #1f2329;
+  --c-text-2: #646a73;
+  --c-text-3: #8f959e;
+  --c-sidebar-bg: #ffffff;
+  --c-sidebar-text: #3d4450;
+  --c-sidebar-active: #eff6ff;
+  --c-sidebar-active-text: #2563eb;
+  --c-hover: #f3f4f6;
+  --c-danger: #e5484d;
+  --c-success: #2fa84f;
+  --c-warning: #d97706;
+  --c-header-bg: #ffffff;
+  --c-shadow: rgba(16, 24, 40, 0.08);
+  --radius: 8px;
+  --radius-lg: 12px;
+}
+
+/* 暗色主题（theme.js 预设覆盖） */
+html[data-theme="dark"] {
+  --c-primary: #3b82f6;
+  --c-primary-hover: #60a5fa;
+  --c-primary-weak: rgba(59, 130, 246, 0.15);
+  --c-bg: #111418;
+  --c-card: #1a1f26;
+  --c-border: #2a313a;
+  --c-border-strong: #3a424d;
+  --c-text: #e6e8eb;
+  --c-text-2: #9aa3ad;
+  --c-text-3: #6b7480;
+  --c-sidebar-bg: #161b21;
+  --c-sidebar-text: #aab2bc;
+  --c-sidebar-active: rgba(59, 130, 246, 0.15);
+  --c-sidebar-active-text: #60a5fa;
+  --c-hover: rgba(255, 255, 255, 0.06);
+  --c-header-bg: #161b21;
+  --c-shadow: rgba(0, 0, 0, 0.35);
+}

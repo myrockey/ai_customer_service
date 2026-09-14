@@ -1,0 +1,131 @@
+package main
+
+import (
+	"customer_service/internal"
+	"fmt"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+)
+
+func main() {
+	// 加载配置
+	if err := internal.LoadConfig("./config.yaml"); err != nil {
+		panic(err)
+	}
+	if err := internal.InitDB(); err != nil {
+		panic(err)
+	}
+
+	r := gin.Default()
+
+	// ========= 业务内部接口：给Python Agent调用查询订单 =========
+	r.GET("/api/business/order", func(c *gin.Context) {
+		orderId := c.Query("order_id")
+		var ord internal.Order
+		err := internal.DB.Where("order_id = ?", orderId).First(&ord).Error
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 500, "data": "未找到订单"})
+			return
+		}
+		text := sprintf("订单 %s：%s | 金额 ¥%d | 状态 %s | 日期 %s",
+			ord.OrderID, ord.Item, ord.Amount, ord.Status, ord.CreateDate)
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": text})
+	})
+
+	// ========= 用户聊天对外接口 =========
+	type UserChatBody struct {
+		UserID string `json:"user_id"`
+		Msg    string `json:"msg"`
+	}
+	r.POST("/api/user/chat", func(c *gin.Context) {
+		var body UserChatBody
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "参数错误"})
+			return
+		}
+		// 简单：user_id直接作为thread_id；真实项目会话管理自行改造
+		threadID := body.UserID
+
+		agentResp, err := internal.CallAgentChat(threadID, body.Msg)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "调用agent失败:" + err.Error()})
+			return
+		}
+
+		if agentResp.IsInterrupt {
+			// 生成工单入库
+			ticketNo := "TK-" + uuid.NewString()[:8]
+			t := internal.Ticket{
+				ThreadID: threadID,
+				TicketNo: ticketNo,
+				UserID:   body.UserID,
+				Reason:   agentResp.InterruptData["reason"].(string),
+				Status:   0,
+			}
+			internal.DB.Create(&t)
+			c.JSON(http.StatusOK, gin.H{
+				"code":          0,
+				"msg":           "已提交人工客服，请等待处理",
+				"is_human_wait": true,
+				"ticket_no":     ticketNo,
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"code": 0,
+			"msg":  agentResp.Content,
+		})
+	})
+
+	// ========= 人工后台审批接口 =========
+	type ApproveBody struct {
+		TicketNo  string `json:"ticket_no"`
+		ThreadID  string `json:"thread_id"`
+		Confirmed bool   `json:"confirmed"`
+		WaitTime  int    `json:"wait_time"`
+	}
+	r.POST("/api/admin/ticket/approve", func(c *gin.Context) {
+		var body ApproveBody
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "参数错误"})
+			return
+		}
+		// 更新工单状态
+		var tk internal.Ticket
+		internal.DB.Where("ticket_no = ?", body.TicketNo).First(&tk)
+		if tk.ID == 0 {
+			c.JSON(http.StatusOK, gin.H{"code": 404, "msg": "工单不存在"})
+			return
+		}
+		if body.Confirmed {
+			tk.Status = 1
+		} else {
+			tk.Status = 2
+		}
+		internal.DB.Save(&tk)
+
+		agentResp, err := internal.CallAgentResume(internal.ResumeReq{
+			ThreadID:  body.ThreadID,
+			Confirmed: body.Confirmed,
+			WaitTime:  body.WaitTime,
+			TicketID:  body.TicketNo,
+		})
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "resume失败:" + err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"code": 0,
+			"msg":  agentResp.Content,
+		})
+	})
+
+	_ = r.Run(internal.GlobalConfig.Server.Port)
+}
+
+func sprintf(format string, a ...interface{}) string {
+	return fmt.Sprintf(format, a...)
+}

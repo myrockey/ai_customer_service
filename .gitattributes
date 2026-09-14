@@ -1,0 +1,16 @@
+# 确保 shell 脚本使用 LF 换行符（Windows 下创建的脚本不会包含 CRLF）
+*.sh text eol=lf
+*.bash text eol=lf
+
+# 确保配置文件使用 LF 换行符
+*.yaml text eol=lf
+*.yml text eol=lf
+*.conf text eol=lf
+*.env text eol=lf
+
+# Go 和 Python 源文件
+*.go text eol=lf
+*.py text eol=lf
+
+# 文档文件
+*.md text eol=lf

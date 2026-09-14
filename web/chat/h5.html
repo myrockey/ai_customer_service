@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>在线客服</title>
+<!-- 微信小程序 JSSDK（web-view 中用于 wx.miniProgram.navigateBack / postMessage） -->
+<script src="https://res.wx.qq.com/open/js/jweixin-1.3.2.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',sans-serif}
+html,body{height:100%;width:100%;overflow:hidden;background:#f5f6f8;-webkit-text-size-adjust:100%}
+
+/* 整体容器 */
+.chat-app{display:flex;flex-direction:column;height:100vh;height:100dvh;width:100%;background:#fff}
+
+/* 顶部栏 */
+.chat-header{
+  display:flex;align-items:center;gap:10px;
+  padding:12px 14px;padding-top:calc(12px + env(safe-area-inset-top));
+  background:linear-gradient(135deg,var(--theme,#1890ff),var(--theme-dark,#096dd9));
+  color:#fff;flex-shrink:0;
+  box-shadow:0 2px 8px rgba(0,0,0,.08);
+  position:relative;z-index:10;
+}
+.chat-header .back-btn{
+  width:36px;height:36px;display:flex;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.15);border:none;border-radius:50%;
+  color:#fff;font-size:18px;cursor:pointer;flex-shrink:0;
+}
+.chat-header .back-btn:active{background:rgba(255,255,255,.3)}
+.chat-header .avatar{
+  width:38px;height:38px;border-radius:50%;
+  background:rgba(255,255,255,.25);
+  display:flex;align-items:center;justify-content:center;
+  font-size:18px;flex-shrink:0;
+}
+.chat-header .info{flex:1;min-width:0}
+.chat-header .title{font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-header .status{font-size:11px;opacity:.9;display:flex;align-items:center;gap:4px;margin-top:1px}
+.chat-header .status .dot{width:6px;height:6px;border-radius:50%;background:#52c41a;display:inline-block}
+.chat-header .more-btn{
+  width:36px;height:36px;display:flex;align-items:center;justify-content:center;
+  background:none;border:none;color:#fff;font-size:20px;cursor:pointer;flex-shrink:0;
+}
+
+/* 消息区 */
+.chat-body{flex:1;overflow-y:auto;padding:14px 12px;display:flex;flex-direction:column;gap:10px;background:#f5f6f8;-webkit-overflow-scrolling:touch}
+.chat-body::-webkit-scrollbar{display:none}
+
+/* 消息气泡 */
+.msg{display:flex;gap:8px;max-width:82%;animation:msgIn .25s ease}
+@keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.msg.ai{align-self:flex-start}
+.msg.user{align-self:flex-end;flex-direction:row-reverse}
+.msg .bubble{
+  padding:10px 14px;border-radius:14px;font-size:15px;line-height:1.6;
+  word-break:break-word;white-space:pre-wrap;position:relative;
+}
+.msg.ai .bubble{background:#fff;border:1px solid #e8e8e8;border-top-left-radius:4px;color:#333}
+.msg.user .bubble{background:var(--theme,#1890ff);color:#fff;border-top-right-radius:4px}
+.msg .time{font-size:10px;color:#999;margin-top:3px}
+.msg.ai .time{text-align:left}
+.msg.user .time{text-align:right}
+
+/* 系统消息 */
+.msg.system{align-self:center;max-width:90%}
+.msg.system .bubble{
+  background:#fff7e6;border:1px solid #ffe7ba;color:#d46b08;
+  font-size:12px;padding:6px 14px;border-radius:16px;text-align:center;
+}
+
+/* 打字指示器 */
+.typing{align-self:flex-start;display:flex;gap:8px;align-items:center}
+.typing .bubble{background:#fff;border:1px solid #e8e8e8;border-radius:14px;padding:12px 16px;display:flex;gap:4px}
+.typing .dot{width:6px;height:6px;border-radius:50%;background:#bbb;animation:typing 1.4s infinite}
+.typing .dot:nth-child(2){animation-delay:.2s}
+.typing .dot:nth-child(3){animation-delay:.4s}
+@keyframes typing{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-5px);opacity:1}}
+
+/* 欢迎语 */
+.welcome{align-self:center;text-align:center;padding:30px 0;color:#999}
+.welcome .icon{font-size:48px;margin-bottom:10px}
+.welcome .text{font-size:14px;line-height:1.8}
+.welcome .quick{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:16px}
+.welcome .quick button{
+  background:#fff;border:1px solid #e8e8e8;color:#666;
+  padding:8px 14px;border-radius:20px;font-size:13px;cursor:pointer;
+}
+.welcome .quick button:active{background:#f0f0f0}
+
+/* 输入区 */
+.chat-input{
+  display:flex;flex-direction:column;gap:8px;
+  padding:10px 12px;padding-bottom:calc(10px + env(safe-area-inset-bottom));
+  background:#fff;border-top:1px solid #e8e8e8;flex-shrink:0;
+}
+.chat-input .toolbar{display:flex;align-items:center;gap:8px}
+.chat-input .toolbar button{
+  background:none;border:1px solid #e8e8e8;color:#666;
+  padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;
+}
+.chat-input .toolbar .handoff{color:#fa8c16;border-color:#fa8c16}
+.chat-input .input-row{display:flex;gap:8px;align-items:flex-end}
+.chat-input textarea{
+  flex:1;border:1px solid #e8e8e8;border-radius:8px;padding:10px 12px;
+  font-size:15px;resize:none;outline:none;line-height:1.5;
+  font-family:inherit;max-height:100px;min-height:40px;
+}
+.chat-input textarea:focus{border-color:var(--theme,#1890ff)}
+.chat-input .send-btn{
+  background:var(--theme,#1890ff);color:#fff;border:none;
+  padding:0 20px;border-radius:8px;cursor:pointer;font-size:15px;font-weight:600;
+  height:40px;flex-shrink:0;
+}
+.chat-input .send-btn:active{background:var(--theme-dark,#096dd9)}
+.chat-input .send-btn:disabled{background:#ccc}
+
+/* 连接状态提示 */
+.conn-toast{
+  position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  background:rgba(0,0,0,.75);color:#fff;padding:12px 24px;border-radius:8px;
+  font-size:14px;z-index:999;display:none;
+}
+</style>
+</head>
+<body>
+<div class="chat-app">
+  <!-- 顶部栏 -->
+  <div class="chat-header">
+    <button class="back-btn" onclick="goBack()">‹</button>
+    <div class="avatar">🤖</div>
+    <div class="info">
+      <div class="title" id="chatTitle">智能客服</div>
+      <div class="status"><span class="dot"></span><span id="chatStatus">在线</span></div>
+    </div>
+  </div>
+
+  <!-- 消息区 -->
+  <div class="chat-body" id="chatBody">
+    <div class="welcome" id="welcomeMsg">
+      <div class="icon">💬</div>
+      <div class="text">您好，我是智能客服助手<br>有什么可以帮您？</div>
+      <div class="quick">
+        <button onclick="quickSend('如何查询订单？')">如何查询订单？</button>
+        <button onclick="quickSend('怎么申请退款？')">怎么申请退款？</button>
+        <button onclick="quickSend('联系人工客服')">联系人工客服</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 输入区 -->
+  <div class="chat-input">
+    <div class="toolbar">
+      <button class="handoff" onclick="requestHandoff()">👤 转人工</button>
+    </div>
+    <div class="input-row">
+      <textarea id="msgInput" placeholder="请输入您的问题..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+      <button class="send-btn" id="sendBtn" onclick="sendMessage()">发送</button>
+    </div>
+  </div>
+</div>
+
+<!-- 连接状态 -->
+<div class="conn-toast" id="connToast">连接中...</div>
+
+<script>
+// ============ 配置解析 ============
+function qp(name){
+  var m = location.search.match(new RegExp('[?&]'+name+'=([^&]*)'));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+var CONFIG = {
+  server: qp('server') || (location.protocol + '//' + location.host),
+  token: qp('token'),
+  user_id: qp('user_id'),
+  app_key: qp('app_key'),
+  app_secret: qp('app_secret'),
+  title: qp('title') || '智能客服',
+  theme: qp('theme') || '#1890ff',
+};
+
+document.documentElement.style.setProperty('--theme', CONFIG.theme);
+document.documentElement.style.setProperty('--theme-dark', darken(CONFIG.theme));
+document.getElementById('chatTitle').textContent = CONFIG.title;
+
+function darken(hex){
+  var r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+  return '#'+[r,g,b].map(function(x){return Math.max(0,x-30).toString(16).padStart(2,'0')}).join('');
+}
+
+// ============ user_id ============
+function parseTenantId(token){
+  try{
+    var p=token.split('.');
+    var b64=p.length===3?p[1]:p[0];
+    b64=b64.replace(/-/g,'+').replace(/_/g,'/');
+    while(b64.length%4)b64+='=';
+    var d=JSON.parse(atob(b64));
+    return d.tid||d.tenant_id||null;
+  }catch(e){return null;}
+}
+var tenantId=null;
+function getUserId(){
+  var tid=tenantId||'unknown';
+  if(CONFIG.user_id) return (CONFIG.user_id.indexOf(':')>0)?CONFIG.user_id:(tid+':'+CONFIG.user_id);
+  var key='cs_h5_uid_'+tid;
+  var uid=localStorage.getItem(key);
+  if(!uid){uid='h5_'+Date.now()+'_'+Math.random().toString(36).slice(2,8);localStorage.setItem(key,uid);}
+  return tid+':'+uid;
+}
+var userId=null;
+
+// ============ Token ============
+var authToken = CONFIG.token;
+async function ensureToken(){
+  if (authToken) return authToken;
+  if (CONFIG.app_key && CONFIG.app_secret) {
+    showToast('正在登录...');
+    var resp = await fetch(CONFIG.server + '/api/auth/token', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({app_key:CONFIG.app_key, app_secret:CONFIG.app_secret})
+    });
+    var data = await resp.json();
+    if (data.code === 0) { authToken = data.data.token; hideToast(); return authToken; }
+    throw new Error(data.msg || '登录失败');
+  }
+  throw new Error('缺少 token 或 app_key/app_secret');
+}
+
+// ============ WebSocket ============
+var ws = null, wsConnected = false, reconnectTimer = null, reconnectCount = 0, heartbeatTimer = null, kickedFlag = false;
+
+function connectWS(){
+  kickedFlag = false;
+  ensureToken().then(function(token){
+    tenantId = parseTenantId(token) || CONFIG.app_key || 'unknown';
+    userId = getUserId();
+    var url = CONFIG.server.replace(/^http/,'ws') + '/ws/chat?token='+encodeURIComponent(token)+'&user_id='+encodeURIComponent(userId);
+    ws = new WebSocket(url);
+    ws.onopen = function(){
+      wsConnected = true; reconnectCount = 0; hideToast();
+      document.getElementById('chatStatus').textContent = '在线';
+      startHeartbeat();
+    };
+    ws.onmessage = function(e){
+      try { handleMsg(JSON.parse(e.data)); } catch(err){}
+    };
+    ws.onclose = function(){
+      wsConnected = false; stopHeartbeat();
+      document.getElementById('chatStatus').textContent = '重连中...';
+      if (kickedFlag) return; // 已在其他窗口建立连接，停止重连
+      scheduleReconnect();
+    };
+    ws.onerror = function(){ ws.close(); };
+  }).catch(function(err){
+    showToast('登录失败');
+    addSystem('连接失败：' + err.message);
+  });
+}
+
+function scheduleReconnect(){
+  if (reconnectTimer) return;
+  reconnectCount++;
+  var delay = Math.min(1000*Math.pow(2,reconnectCount), 30000);
+  showToast('重连中...');
+  reconnectTimer = setTimeout(function(){ reconnectTimer=null; connectWS(); }, delay);
+}
+
+function startHeartbeat(){
+  stopHeartbeat();
+  heartbeatTimer = setInterval(function(){
+    if (ws && ws.readyState===1) ws.send(JSON.stringify({type:'ping'}));
+  }, 30000);
+}
+function stopHeartbeat(){ if(heartbeatTimer){clearInterval(heartbeatTimer);heartbeatTimer=null;} }
+
+// ============ 消息处理 ============
+function handleMsg(data){
+  switch(data.type){
+    case 'history': renderHistory(data.messages||[]); break;
+    case 'chat_reply': hideTyping(); addAI(data.msg); break;
+    case 'ticket': hideTyping(); addSystem('🎫 '+(data.reused ? ('您已提交人工客服，正在等待人工接入（工单号：'+(data.ticket_no||'')+'）') : ('工单已创建（'+(data.ticket_no||'')+'），人工客服即将接入'))); break;
+    case 'human_notice': hideTyping(); addSystem('👤 '+(data.msg||'人工客服已接入')); break;
+    case 'human_reply': hideTyping(); addAI(data.msg, true); break;
+    case 'notice': hideTyping(); addSystem(data.msg); break;
+    case 'error': hideTyping(); addSystem('⚠️ '+(data.msg||'出错了'));
+      if (data.code === 'concurrency_full') {
+        wsConnected = false;
+        stopHeartbeat();
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        reconnectTimer = setTimeout(function(){ reconnectTimer=null; connectWS(); }, 30000);
+      }
+      break;
+    case 'kicked':
+      // 已在其他窗口建立连接：停止自动重连，避免无限互踢
+      kickedFlag = true;
+      wsConnected = false;
+      stopHeartbeat();
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      addSystem('ℹ️ '+(data.msg||'连接已在其他窗口建立'));
+      break;
+  }
+}
+
+function renderHistory(msgs){
+  if (!msgs || !msgs.length) return;
+  var w = document.getElementById('welcomeMsg'); if(w) w.style.display='none';
+  var body = document.getElementById('chatBody');
+  body.querySelectorAll('.msg,.typing').forEach(function(c){c.remove();});
+  msgs.forEach(function(m){
+    var role = m.role||m.sender||'ai';
+    var content = m.content||m.msg||m.message||'';
+    if(role==='user'||role==='customer') addUser(content,m.created_at||m.timestamp,true);
+    else if(role==='system'||role==='notice') addSystem(content,true);
+    else addAI(content,false,m.created_at||m.timestamp,true);
+  });
+  scrollBottom();
+}
+
+// ============ UI ============
+function addUser(text,time,noScroll){
+  var w=document.getElementById('welcomeMsg'); if(w) w.style.display='none';
+  var d=document.createElement('div'); d.className='msg user';
+  d.innerHTML='<div class="bubble"></div><div class="time"></div>';
+  d.querySelector('.bubble').textContent=text;
+  d.querySelector('.time').textContent=fmtTime(time);
+  document.getElementById('chatBody').appendChild(d);
+  if(!noScroll) scrollBottom();
+}
+
+function addAI(text,isHuman,time,noScroll){
+  var d=document.createElement('div'); d.className='msg ai';
+  var av=isHuman?'👤':'🤖';
+  d.innerHTML='<div style="font-size:22px;flex-shrink:0;margin-top:6px">'+av+'</div><div><div class="bubble"></div><div class="time"></div></div>';
+  d.querySelector('.bubble').textContent=text;
+  d.querySelector('.time').textContent=fmtTime(time);
+  document.getElementById('chatBody').appendChild(d);
+  if(!noScroll) scrollBottom();
+}
+
+function addSystem(text,noScroll){
+  var d=document.createElement('div'); d.className='msg system';
+  d.innerHTML='<div class="bubble"></div>';
+  d.querySelector('.bubble').textContent=text;
+  document.getElementById('chatBody').appendChild(d);
+  if(!noScroll) scrollBottom();
+}
+
+function showTyping(){
+  hideTyping();
+  var d=document.createElement('div'); d.className='typing'; d.id='typingInd';
+  d.innerHTML='<div style="font-size:22px;flex-shrink:0;margin-top:6px">🤖</div><div class="bubble"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>';
+  document.getElementById('chatBody').appendChild(d);
+  scrollBottom();
+}
+function hideTyping(){ var t=document.getElementById('typingInd'); if(t) t.remove(); }
+
+function fmtTime(t){
+  if(!t){var d=new Date();return pad(d.getHours())+':'+pad(d.getMinutes());}
+  if(typeof t==='number') t=new Date(t);
+  if(t instanceof Date) return pad(t.getHours())+':'+pad(t.getMinutes());
+  var m=String(t).match(/(\d{2}):(\d{2})/); return m?m[1]+':'+m[2]:String(t).slice(0,16);
+}
+function pad(n){return n<10?'0'+n:n;}
+
+function scrollBottom(){
+  var b=document.getElementById('chatBody');
+  setTimeout(function(){b.scrollTop=b.scrollHeight;},10);
+}
+
+function showToast(msg){var t=document.getElementById('connToast');t.textContent=msg;t.style.display='block';}
+function hideToast(){document.getElementById('connToast').style.display='none';}
+
+// ============ 发送 ============
+function sendMessage(){
+  var input=document.getElementById('msgInput');
+  var text=input.value.trim();
+  if(!text) return;
+  if(!wsConnected){addSystem('连接未建立，请稍候...');return;}
+  addUser(text);
+  input.value=''; autoResize(input);
+  showTyping();
+  try{ ws.send(JSON.stringify({type:'chat',msg:text})); }
+  catch(e){ hideTyping(); addSystem('发送失败：'+e.message); }
+}
+
+function quickSend(text){
+  document.getElementById('msgInput').value=text;
+  sendMessage();
+}
+
+function requestHandoff(){
+  if(!wsConnected){addSystem('连接未建立，请稍候...');return;}
+  addUser('请转接人工客服');
+  showTyping();
+  try{ ws.send(JSON.stringify({type:'chat',msg:'请转接人工客服，我需要人工处理'})); }
+  catch(e){ hideTyping(); addSystem('发送失败：'+e.message); }
+}
+
+// ============ 输入框 ============
+function handleKey(e){
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}
+}
+function autoResize(el){
+  el.style.height='auto';
+  el.style.height=Math.min(el.scrollHeight,100)+'px';
+}
+
+// ============ 其他 ============
+function goBack(){
+  // 1. 通知父窗口（SDK iframe / App WebView / 小程序 web-view）关闭
+  if (window.parent && window.parent !== window) {
+    try { window.parent.postMessage({type:'cs_close', source:'cs-chat'}, '*'); } catch(e){}
+  }
+  // 2. 通知 App 原生容器（JSBridge，如 iOS WKScriptMessageHandler / Android addJavascriptInterface）
+  try {
+    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.csClose) {
+      window.webkit.messageHandlers.csClose.postMessage({type:'close'});
+      return;
+    }
+  } catch(e){}
+  try {
+    if (window.AndroidBridge && window.AndroidBridge.close) {
+      window.AndroidBridge.close();
+      return;
+    }
+  } catch(e){}
+  // 3. 小程序 web-view：通过 wx.miniProgram.navigateBack 返回小程序
+  try {
+    if (window.wx && window.wx.miniProgram) {
+      window.wx.miniProgram.navigateBack();
+      return;
+    }
+  } catch(e){}
+  // 4. 普通浏览器：有历史记录则返回，否则尝试关闭窗口
+  if (window.history.length > 1) {
+    window.history.back();
+  } else {
+    try { window.close(); } catch(e){}
+  }
+}
+
+function showMenu(){
+  if(confirm('确定清空当前对话记录吗？')){
+    var body=document.getElementById('chatBody');
+    body.querySelectorAll('.msg,.typing').forEach(function(c){c.remove();});
+    var w=document.getElementById('welcomeMsg'); if(w) w.style.display='block';
+  }
+}
+
+// ============ 初始化 ============
+connectWS();
+</script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+package internal
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+)
+
+type ChatReq struct {
+	ThreadID    string `json:"thread_id"`
+	UserMessage string `json:"user_message"`
+}
+
+type ChatResp struct {
+	Success       bool                   `json:"success"`
+	IsInterrupt   bool                   `json:"is_interrupt"`
+	InterruptData map[string]interface{} `json:"interrupt_data"`
+	Content       string                 `json:"content"`
+}
+
+type ResumeReq struct {
+	ThreadID  string `json:"thread_id"`
+	Confirmed bool   `json:"confirmed"`
+	WaitTime  int    `json:"wait_time"`
+	TicketID  string `json:"ticket_id"`
+}
+
+func CallAgentChat(threadID, msg string) (*ChatResp, error) {
+	payload := ChatReq{ThreadID: threadID, UserMessage: msg}
+	body, _ := json.Marshal(payload)
+	url := fmt.Sprintf("%s/agent/chat", GlobalConfig.AgentURL)
+	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var res ChatResp
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+func CallAgentResume(req ResumeReq) (*ChatResp, error) {
+	body, _ := json.Marshal(req)
+	url := fmt.Sprintf("%s/agent/resume", GlobalConfig.AgentURL)
+	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var res ChatResp
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
