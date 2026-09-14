@@ -45,7 +45,7 @@
 
 ```bash
 # 1. 克隆项目
-git clone https://gitee.com/rockeyLuo/ai_customer_service.git && cd ai_customer_service
+git clone https://github.com/myrockey/ai_customer_service.git && cd ai_customer_service
 
 # 2. 配置环境变量
 cp .env.example .env
