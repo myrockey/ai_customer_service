@@ -8,21 +8,50 @@ from langgraph.types import interrupt
 
 from cache import _kb_cache_get, _kb_cache_set
 from config import GO_BUSINESS_API
+from db_pool import _pool_conn
 
 # 模块级 app 引用，由 main.py 注入
 _app = None
 _logger = None
 _tenant_var = None
 _pending_ticket_var = None
+_thread_var = None
 
 
-def set_app(app, logger, tenant_var, pending_ticket_var=None):
+def set_app(app, logger, tenant_var, pending_ticket_var=None, thread_var=None):
     """注入全局 app、logger、tenant_var（在 main.py 中调用）"""
-    global _app, _logger, _tenant_var, _pending_ticket_var
+    global _app, _logger, _tenant_var, _pending_ticket_var, _thread_var
     _app = app
     _logger = logger
     _tenant_var = tenant_var
     _pending_ticket_var = pending_ticket_var
+    _thread_var = thread_var
+
+
+async def _record_kb_hits(tid: str, thread_id: str, query: str, docs: list) -> None:
+    """KB 闭环：检索结果落库（异步旁路，失败不影响对话）。
+    docs 为空 → 插入一条未命中记录（doc_id 为空）。
+    docs 非空 → 每个命中文档插一条记录（doc_id/doc_title/score）。
+    """
+    try:
+        if docs:
+            rows = [
+                (tid, thread_id, d.metadata.get("doc_id", ""), d.metadata.get("title", ""), query,
+                 float(getattr(d, "metadata", {}).get("score", 0) or 0))
+                for d in docs
+            ]
+        else:
+            rows = [(tid, thread_id, "", "", query, 0.0)]
+        async with _pool_conn(_app) as conn:
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    "INSERT INTO kb_hits (tenant_id, thread_id, doc_id, doc_title, query, score) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    rows,
+                )
+    except Exception as e:
+        if _logger:
+            _logger.warning(f"[KB Hit] 记录失败 tenant={tid}: {str(e)[:120]}")
 
 
 @tool
@@ -34,6 +63,7 @@ async def search_kb(query: str) -> str:
         query: 搜索问题或关键词
     """
     tid = _tenant_var.get() or ""
+    thread_id = (_thread_var.get() if _thread_var is not None else "") or ""
 
     # P2-2：先查缓存
     cached = _kb_cache_get(tid, query)
@@ -54,6 +84,9 @@ async def search_kb(query: str) -> str:
         result = "未找到相关信息，建议转接人工客服。"
     else:
         result = "\n".join(f"- {doc.page_content}" for doc in docs)
+
+    # KB 闭环：检索结果落库（命中明细 / 未命中查询）
+    await _record_kb_hits(tid, thread_id, query, docs)
 
     # P2-2：写入缓存
     _kb_cache_set(tid, query, result)

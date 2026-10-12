@@ -39,6 +39,13 @@ func AuditMiddleware() gin.HandlerFunc {
 		if tenantID == "" {
 			tenantID = "system"
 		}
+		// 操作人：子账号记用户名（可追溯到具体员工）；app_key 管理员沿用租户 ID
+		operator := tenantID
+		if uid := UserIDOf(c); uid > 0 {
+			if u, err := repository.GetUserByID(uid); err == nil && u != nil {
+				operator = u.Username
+			}
+		}
 		objectType := auditObjectType(path)
 		// 平台管理员操作标记为平台级（t_admin 本身是租户表内的平台管理员行）
 		objectID := c.Param("id")
@@ -47,8 +54,8 @@ func AuditMiddleware() gin.HandlerFunc {
 			parts := strings.Split(strings.TrimSuffix(c.Request.URL.Path, "/"), "/")
 			objectID = parts[len(parts)-1]
 		}
-		repository.WriteAuditLog(tenantID, tenantID, action, objectType,
-			objectID, "", c.ClientIP())
+		repository.WriteAuditLog(tenantID, operator, action, objectType,
+			objectID, "", c.ClientIP(), UserIDOf(c))
 	}
 }
 

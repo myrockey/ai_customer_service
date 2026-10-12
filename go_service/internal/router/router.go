@@ -1,4 +1,4 @@
-package router
+﻿package router
 
 import (
 	"net/http"
@@ -8,6 +8,7 @@ import (
 
 	"customer_service/internal/handler"
 	"customer_service/internal/middleware"
+	"customer_service/internal/pkg/permission"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -66,6 +67,9 @@ func SetupRoutes(r *gin.Engine) {
 		// P1-2：Agent 配额校验用（返回租户配额数值）
 		agentInternal.GET("/tenant-quota", handler.AgentTenantQuota)
 		agentInternal.GET("/tenant-concurrency", handler.AgentTenantConcurrency)
+		// 会话摘要：agent 后台任务拉候选会话 / 回写摘要
+		agentInternal.GET("/session-summaries/pending", handler.AgentSessionSummaryPending)
+		agentInternal.POST("/session-summaries", handler.AgentSessionSummarySave)
 	}
 
 	// ============ WebSocket：用户聊天长连接 ============
@@ -77,6 +81,7 @@ func SetupRoutes(r *gin.Engine) {
 	// ============ 鉴权：宿主/管理端换票 ============
 	r.GET("/api/auth/public-key", handler.PublicKeyHandler)
 	r.POST("/api/auth/token", handler.IssueTokenHandler)
+	r.POST("/api/auth/user-token", handler.UserTokenHandler)
 	r.POST("/api/auth/refresh", handler.RefreshTokenHandler)
 	r.POST("/api/auth/logout", handler.LogoutHandler)
 	// 修改自己密码（平台管理员/租户管理员，需登录态）
@@ -91,18 +96,23 @@ func SetupRoutes(r *gin.Engine) {
 	// ============ 用户历史消息 ============
 	r.GET("/api/user/messages", middleware.UserAuth(), handler.UserMessages)
 
+	// ============ 用户满意度评价 ============
+	r.POST("/api/user/rating", middleware.UserAuth(), handler.UserSubmitRating)
+
 	// ============ 人工客服完整后台 ============
 	admin := r.Group("/api/admin", middleware.AdminAuth(), middleware.AuditMiddleware())
 	{
+		// 菜单树（登录用户渲染侧边栏/动态路由；uid=0 全量，子账号按权限过滤）
+		admin.GET("/menus/tree", handler.AdminMenuTree)
 		// 公共配置接口：平台管理员和租户都可访问
 		// 模型提供商列表是公共配置数据，不属于租户业务数据
 		admin.GET("/available-model-providers", handler.ListModelProvidersForTenant)
 
 		// P1-1：Token 用量报表（平台管理员全览 / 租户仅自身，handler 内按角色处理）
-		admin.GET("/token-usage", handler.TokenUsageReport)
+		admin.GET("/token-usage", middleware.RequirePerm(permission.UsageView), handler.TokenUsageReport)
 
 		// P1-3：审计日志（平台管理员全览 / 租户仅自身）
-		admin.GET("/audit-logs", handler.AuditLogs)
+		admin.GET("/audit-logs", middleware.RequirePerm(permission.AuditView), handler.AuditLogs)
 
 		// 平台设置（平台管理员动态配置，如知识库上传大小限制 kb_max_file_mb）
 		admin.GET("/platform-settings", func(c *gin.Context) {
@@ -113,77 +123,127 @@ func SetupRoutes(r *gin.Engine) {
 		// 业务接口：普通租户客服可用
 		biz := admin.Group("", middleware.BusinessOnly())
 		{
-			biz.GET("/tickets", handler.AdminTicketList)
-			biz.GET("/tickets/:id", handler.AdminTicketDetail)
-			biz.GET("/tickets/:id/messages", handler.AdminTicketMessages)
-			biz.POST("/tickets/:id/takeover", handler.AdminTicketTakeover)
-			biz.POST("/tickets/:id/reply", handler.AdminTicketReply)
-			biz.POST("/tickets/:id/close", handler.AdminTicketClose)
-			biz.POST("/tickets/:id/priority", handler.AdminTicketSetPriority)
-			biz.GET("/tickets/:id/logs", handler.AdminTicketLogs)
-			biz.POST("/tickets/:id/read", handler.AdminTicketMarkRead)
-			biz.POST("/ticket/approve", handler.AdminTicketApprove)
+			// 运营看板（报表聚合）
+			biz.GET("/ops/dashboard", middleware.RequirePerm(permission.DashboardView), handler.AdminOpsDashboard)
+			biz.GET("/tickets", middleware.RequirePerm(permission.TicketView), handler.AdminTicketList)
+			biz.GET("/tickets/:id", middleware.RequirePerm(permission.TicketView), handler.AdminTicketDetail)
+			biz.GET("/tickets/:id/messages", middleware.RequirePerm(permission.TicketView), handler.AdminTicketMessages)
+			biz.POST("/tickets/:id/takeover", middleware.RequirePerm(permission.TicketHandle), handler.AdminTicketTakeover)
+			biz.POST("/tickets/:id/reply", middleware.RequirePerm(permission.TicketHandle), handler.AdminTicketReply)
+			biz.POST("/tickets/:id/close", middleware.RequirePerm(permission.TicketHandle), handler.AdminTicketClose)
+			biz.POST("/tickets/:id/priority", middleware.RequirePerm(permission.TicketHandle), handler.AdminTicketSetPriority)
+			biz.POST("/tickets/:id/transfer", middleware.RequirePerm(permission.TicketHandle), handler.AdminTicketTransfer)
+			biz.GET("/tickets/transfer-targets", middleware.RequirePerm(permission.TicketHandle), handler.AdminTicketTransferTargets)
+			biz.GET("/tickets/:id/logs", middleware.RequirePerm(permission.TicketView), handler.AdminTicketLogs)
+			biz.POST("/tickets/:id/read", middleware.RequirePerm(permission.TicketView), handler.AdminTicketMarkRead)
+			biz.POST("/ticket/approve", middleware.RequirePerm(permission.TicketHandle), handler.AdminTicketApprove)
+
+			// 客服在线状态
+			biz.GET("/agent-status", middleware.RequirePerm(permission.TicketView), handler.AdminAgentStatusList)
+			biz.PUT("/agent-status", middleware.RequirePerm(permission.TicketHandle), handler.AdminAgentStatusUpdate)
+
+			// 快捷回复话术库
+			biz.GET("/quick-replies", middleware.RequirePerm(permission.QuickReplyView), handler.AdminQuickReplyList)
+			biz.POST("/quick-replies", middleware.RequirePerm(permission.QuickReplyAdd), handler.AdminQuickReplyCreate)
+			biz.PUT("/quick-replies/:id", middleware.RequirePerm(permission.QuickReplyEdit), handler.AdminQuickReplyUpdate)
+			biz.DELETE("/quick-replies/:id", middleware.RequirePerm(permission.QuickReplyRemove), handler.AdminQuickReplyDelete)
+
+			// 满意度评价
+			biz.GET("/ratings", middleware.RequirePerm(permission.RatingView), handler.AdminRatingList)
+			biz.GET("/ratings/stats", middleware.RequirePerm(permission.RatingView), handler.AdminRatingStats)
 
 			// Prompt 管理（scope=platform 时仅平台管理员操作平台级全局 Prompt）
-			biz.GET("/prompts", func(c *gin.Context) { handler.ProxyPrompt(c, http.MethodGet, "/agent/prompts") })
-			biz.GET("/prompts/active", func(c *gin.Context) { handler.ProxyPrompt(c, http.MethodGet, "/agent/prompts/active") })
-			biz.POST("/prompts", func(c *gin.Context) { handler.ProxyPrompt(c, http.MethodPost, "/agent/prompts") })
-			biz.POST("/prompts/:key/activate", func(c *gin.Context) {
+			biz.GET("/prompts", middleware.RequirePerm(permission.PromptView), func(c *gin.Context) { handler.ProxyPrompt(c, http.MethodGet, "/agent/prompts") })
+			biz.GET("/prompts/active", middleware.RequirePerm(permission.PromptView), func(c *gin.Context) { handler.ProxyPrompt(c, http.MethodGet, "/agent/prompts/active") })
+			biz.POST("/prompts", middleware.RequirePerm(permission.PromptAdd), func(c *gin.Context) { handler.ProxyPrompt(c, http.MethodPost, "/agent/prompts") })
+			biz.POST("/prompts/:key/activate", middleware.RequirePerm(permission.PromptEdit), func(c *gin.Context) {
 				handler.ProxyPrompt(c, http.MethodPost, "/agent/prompts/"+c.Param("key")+"/activate")
 			})
-			biz.DELETE("/prompts/:key", func(c *gin.Context) {
+			biz.DELETE("/prompts/:key", middleware.RequirePerm(permission.PromptRemove), func(c *gin.Context) {
 				handler.ProxyPrompt(c, http.MethodDelete, "/agent/prompts/"+c.Param("key"))
 			})
-			biz.POST("/prompts/:key/versions", func(c *gin.Context) {
+			biz.POST("/prompts/:key/versions", middleware.RequirePerm(permission.PromptEdit), func(c *gin.Context) {
 				handler.ProxyPrompt(c, http.MethodPost, "/agent/prompts/"+c.Param("key")+"/versions")
 			})
-			biz.GET("/prompts/:key/versions", func(c *gin.Context) {
+			biz.GET("/prompts/:key/versions", middleware.RequirePerm(permission.PromptView), func(c *gin.Context) {
 				handler.ProxyPrompt(c, http.MethodGet, "/agent/prompts/"+c.Param("key")+"/versions")
 			})
-			biz.POST("/prompts/:key/versions/:vid/rollback", func(c *gin.Context) {
+			biz.POST("/prompts/:key/versions/:vid/rollback", middleware.RequirePerm(permission.PromptEdit), func(c *gin.Context) {
 				handler.ProxyPrompt(c, http.MethodPost, "/agent/prompts/"+c.Param("key")+"/versions/"+c.Param("vid")+"/rollback")
 			})
 
 			// 知识库管理
-			biz.POST("/kb/upload", handler.ProxyKbUpload)
-			biz.GET("/kb/documents", func(c *gin.Context) { handler.ProxyToAgent(c, http.MethodGet, "/agent/kb/documents") })
-			biz.DELETE("/kb/documents/:doc_id", func(c *gin.Context) {
+			biz.POST("/kb/upload", middleware.RequirePerm(permission.KnowledgeAdd), handler.ProxyKbUpload)
+			biz.GET("/kb/documents", middleware.RequirePerm(permission.KnowledgeView), func(c *gin.Context) { handler.ProxyToAgent(c, http.MethodGet, "/agent/kb/documents") })
+			biz.DELETE("/kb/documents/:doc_id", middleware.RequirePerm(permission.KnowledgeRemove), func(c *gin.Context) {
 				handler.ProxyToAgent(c, http.MethodDelete, "/agent/kb/documents/"+c.Param("doc_id"))
 			})
-			biz.POST("/kb/documents/:doc_id/category", func(c *gin.Context) {
+			biz.POST("/kb/documents/:doc_id/category", middleware.RequirePerm(permission.KnowledgeEdit), func(c *gin.Context) {
 				handler.ProxyToAgent(c, http.MethodPost, "/agent/kb/documents/"+c.Param("doc_id")+"/category")
 			})
-			biz.POST("/kb/documents/:doc_id/reindex", func(c *gin.Context) {
+			biz.POST("/kb/documents/:doc_id/reindex", middleware.RequirePerm(permission.KnowledgeEdit), func(c *gin.Context) {
 				handler.ProxyToAgent(c, http.MethodPost, "/agent/kb/documents/"+c.Param("doc_id")+"/reindex")
 			})
 			// 手动触发索引入队（空 body = 全部待索引/失败文档；doc_ids 数组 = 指定文档）
-			biz.POST("/kb/index", func(c *gin.Context) {
+			biz.POST("/kb/index", middleware.RequirePerm(permission.KnowledgeEdit), func(c *gin.Context) {
 				handler.ProxyToAgent(c, http.MethodPost, "/agent/kb/index")
 			})
-			biz.GET("/kb/categories", func(c *gin.Context) {
+			biz.GET("/kb/categories", middleware.RequirePerm(permission.KnowledgeView), func(c *gin.Context) {
 				handler.ProxyToAgent(c, http.MethodGet, "/agent/kb/categories")
 			})
-			biz.POST("/kb/batch", func(c *gin.Context) {
+			biz.POST("/kb/batch", middleware.RequirePerm(permission.KnowledgeEdit), func(c *gin.Context) {
 				handler.ProxyToAgent(c, http.MethodPost, "/agent/kb/batch")
 			})
 
-			// 会话清理与统计
-			biz.POST("/session/cleanup", func(c *gin.Context) { handler.ProxyToAgent(c, http.MethodPost, "/agent/session/cleanup") })
-			biz.GET("/session/stats", func(c *gin.Context) { handler.ProxyToAgent(c, http.MethodGet, "/agent/session/stats") })
-			biz.GET("/session/cleanup-count", func(c *gin.Context) { handler.ProxyToAgent(c, http.MethodGet, "/agent/session/cleanup-count") })
+			// 会话清理与统计（清理/归档为运维操作，仅 session:cleanup 权限角色）
+			biz.POST("/session/cleanup", middleware.RequirePerm(permission.SessionCleanup), func(c *gin.Context) { handler.ProxyToAgent(c, http.MethodPost, "/agent/session/cleanup") })
+			biz.GET("/session/stats", middleware.RequirePerm(permission.SessionView), func(c *gin.Context) { handler.ProxyToAgent(c, http.MethodGet, "/agent/session/stats") })
+			biz.GET("/session/cleanup-count", middleware.RequirePerm(permission.SessionCleanup), func(c *gin.Context) { handler.ProxyToAgent(c, http.MethodGet, "/agent/session/cleanup-count") })
 
-			// P1-4：消息归档（租户仅本租户，平台管理员全量）
-			biz.POST("/messages/archive", handler.ArchiveMessages)
-			biz.GET("/messages/archive-count", handler.ArchiveMessagesCount)
+			// 会话记录与客户信息（会话列表/聊天记录/人工填写客户档案/重新提取）
+			biz.GET("/sessions", middleware.RequirePerm(permission.SessionView), handler.AdminSessionList)
+			biz.GET("/sessions/:thread_id/messages", middleware.RequirePerm(permission.SessionView), handler.AdminSessionMessages)
+			biz.PUT("/sessions/:thread_id/profile", middleware.RequirePerm(permission.SessionProfileEdit), handler.AdminCustomerProfileUpdate)
+			biz.POST("/sessions/:thread_id/reextract", middleware.RequirePerm(permission.SessionProfileEdit), handler.AdminCustomerReextract)
+			biz.GET("/sessions/:thread_id/tags", middleware.RequirePerm(permission.SessionView), handler.AdminSessionTagsGet)
+			biz.PUT("/sessions/:thread_id/tags", middleware.RequirePerm(permission.SessionProfileEdit), handler.AdminSessionTagsUpdate)
+			// 客户列表（按人聚合，支持搜索）
+			biz.GET("/customers", middleware.RequirePerm(permission.CustomerView), handler.AdminCustomerList)
+
+			// P1-4：消息归档（租户仅本租户，平台管理员全量；运维操作仅 session:cleanup 权限角色）
+			biz.POST("/messages/archive", middleware.RequirePerm(permission.SessionCleanup), handler.ArchiveMessages)
+			biz.GET("/messages/archive-count", middleware.RequirePerm(permission.SessionCleanup), handler.ArchiveMessagesCount)
 
 			// 模型配置
-			biz.GET("/model-config", handler.BusinessModelConfig)
-			biz.PUT("/model-config", handler.BusinessModelConfigUpdate)
+			biz.GET("/model-config", middleware.RequirePerm(permission.ModelView), handler.BusinessModelConfig)
+			biz.PUT("/model-config", middleware.RequirePerm(permission.ModelEdit), handler.BusinessModelConfigUpdate)
+			// RBAC：成员管理
+			biz.GET("/members", middleware.RequirePerm(permission.MemberView), handler.AdminMemberList)
+			biz.POST("/members", middleware.RequirePerm(permission.MemberAdd), handler.AdminMemberCreate)
+			biz.PUT("/members/:id/status", middleware.RequirePerm(permission.MemberEdit), handler.AdminMemberStatus)
+			biz.PUT("/members/:id/password", middleware.RequirePerm(permission.MemberEdit), handler.AdminMemberPassword)
+			biz.PUT("/members/:id/roles", middleware.RequirePerm(permission.MemberEdit), handler.AdminMemberRoles)
+			biz.PUT("/members/:id", middleware.RequirePerm(permission.MemberEdit), handler.AdminMemberUpdate)
+			biz.DELETE("/members/:id", middleware.RequirePerm(permission.MemberRemove), handler.AdminMemberDelete)
+
+			// RBAC：角色管理
+			biz.GET("/roles", middleware.RequirePerm(permission.RoleView), handler.AdminRoleList)
+			biz.GET("/permissions", middleware.RequirePerm(permission.RoleView), handler.AdminPermissionCatalog)
+			biz.POST("/roles", middleware.RequirePerm(permission.RoleAdd), handler.AdminRoleCreate)
+			biz.PUT("/roles/:id", middleware.RequirePerm(permission.RoleEdit), handler.AdminRoleUpdate)
+			biz.DELETE("/roles/:id", middleware.RequirePerm(permission.RoleRemove), handler.AdminRoleDelete)
 		}
 
 		// ============ 租户管理（仅平台管理员） ============
 		plat := admin.Group("", middleware.PlatformAdminOnly())
 		{
+			// 菜单权限管理（平台级：菜单=权限载体，全局一份）
+			plat.GET("/menus", handler.AdminMenuList)
+			plat.POST("/menus", handler.AdminMenuCreate)
+			plat.PUT("/menus/:id", handler.AdminMenuUpdate)
+			plat.DELETE("/menus/:id", handler.AdminMenuDelete)
+			plat.POST("/menus/reset-builtin", handler.AdminMenuResetBuiltin)
+	plat.POST("/menus/batch-update", handler.AdminMenuBatchUpdate)
 			plat.GET("/tenants", handler.TenantList)
 			plat.GET("/tenants/:tid", handler.TenantDetail)
 			plat.POST("/tenants", handler.TenantCreate)
@@ -203,6 +263,10 @@ func SetupRoutes(r *gin.Engine) {
 			plat.PUT("/platform-settings", func(c *gin.Context) {
 				handler.ProxyToAgent(c, http.MethodPut, "/agent/platform-settings")
 			})
+
+			// 客户信息提取规则（平台管理员全局配置，租户共用）
+			plat.GET("/extract-rules", handler.AdminExtractRulesGet)
+			plat.PUT("/extract-rules", handler.AdminExtractRulesUpdate)
 		}
 	}
 }

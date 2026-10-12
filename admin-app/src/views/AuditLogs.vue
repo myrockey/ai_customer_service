@@ -42,6 +42,12 @@
         <template #cell-action="{ row }">
           <span class="badge" :class="actionClass(row.action)">{{ actionText(row.action) }}</span>
         </template>
+        <template #cell-operator="{ row }">
+          <span class="mono">{{ row.operator || '-' }}</span>
+        </template>
+        <template #cell-user_id="{ row }">
+          <span class="mono">{{ row.user_id ? row.user_id : '-' }}</span>
+        </template>
         <template #cell-object_type="{ row }">
           {{ objectText(row.object_type) }}
         </template>
@@ -85,6 +91,8 @@ const fmt = t => t ? String(t).replace('T', ' ').slice(0, 19) : '-'
 const columns = [
   { key: 'created_at', title: '时间', width: '170px' },
   { key: 'tenant_id', title: '租户', width: '140px' },
+  { key: 'operator', title: '操作人', width: '130px' },
+  { key: 'user_id', title: '操作人ID', width: '90px' },
   { key: 'action', title: '操作', width: '90px' },
   { key: 'object_type', title: '对象', width: '110px' },
   { key: 'object_id', title: '对象ID' },

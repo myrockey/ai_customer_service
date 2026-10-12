@@ -88,6 +88,23 @@ html,body{height:100%;width:100%;overflow:hidden;background:#f5f6f8}
 .chat-input .toolbar button:hover{border-color:var(--theme,#1890ff);color:var(--theme,#1890ff)}
 .chat-input .toolbar .handoff{color:#fa8c16;border-color:#fa8c16}
 .chat-input .toolbar .handoff:hover{background:#fff7e6}
+.chat-input .toolbar .rating-btn{color:#722ed1;border-color:#722ed1}
+.chat-input .toolbar .rating-btn:hover{background:#f9f0ff}
+.rating-mask{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;display:flex;align-items:center;justify-content:center}
+.rating-modal{width:320px;max-width:90vw;background:#fff;border-radius:12px;padding:20px;box-shadow:0 8px 30px rgba(0,0,0,.18)}
+.rating-title{font-size:15px;font-weight:600;color:#1f1f1f;margin-bottom:14px;text-align:center}
+.rating-stars{display:flex;justify-content:center;gap:6px;font-size:32px;margin-bottom:12px}
+.rating-stars .star{color:#e5e5e5;cursor:pointer;transition:color .15s;user-select:none}
+.rating-stars .star.on{color:#f5a623}
+.rating-tags{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.rating-tags .tag{padding:4px 10px;border:1px solid #d9d9d9;border-radius:14px;font-size:12px;color:#555;background:#fff;cursor:pointer}
+.rating-tags .tag.on{border-color:#722ed1;color:#722ed1;background:#f9f0ff}
+.rating-comment{width:100%;box-sizing:border-box;border:1px solid #d9d9d9;border-radius:8px;padding:8px 10px;font-size:13px;resize:vertical;min-height:56px}
+.rating-actions{display:flex;gap:10px;margin-top:14px}
+.rating-actions button{flex:1;padding:8px 0;border-radius:8px;font-size:13px;cursor:pointer}
+.rating-cancel{border:1px solid #d9d9d9;background:#fff;color:#666}
+.rating-submit{border:none;background:var(--theme,#1890ff);color:#fff}
+.rating-submit:disabled{background:#ccc;cursor:not-allowed}
 .chat-input .input-row{display:flex;gap:10px;align-items:flex-end}
 .chat-input textarea{
   flex:1;border:1px solid #e8e8e8;border-radius:8px;padding:10px 12px;
@@ -144,12 +161,39 @@ html,body{height:100%;width:100%;overflow:hidden;background:#f5f6f8}
   <div class="chat-input">
     <div class="toolbar">
       <button class="handoff" onclick="requestHandoff()">👤 转人工客服</button>
+      <button class="rating-btn" onclick="openRating()">⭐ 评价本次服务</button>
       <span style="flex:1"></span>
       <span class="hint">Enter 发送 · Shift+Enter 换行</span>
     </div>
     <div class="input-row">
       <textarea id="msgInput" placeholder="请输入您的问题..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
       <button class="send-btn" id="sendBtn" onclick="sendMessage()">发送</button>
+    </div>
+  </div>
+</div>
+
+<!-- 满意度评价弹窗 -->
+<div class="rating-mask" id="ratingMask" style="display:none;" onclick="if(event.target===this)closeRating()">
+  <div class="rating-modal">
+    <div class="rating-title">评价本次服务</div>
+    <div class="rating-stars" id="ratingStars">
+      <span class="star" data-v="1" onclick="pickStar(1)">★</span>
+      <span class="star" data-v="2" onclick="pickStar(2)">★</span>
+      <span class="star" data-v="3" onclick="pickStar(3)">★</span>
+      <span class="star" data-v="4" onclick="pickStar(4)">★</span>
+      <span class="star" data-v="5" onclick="pickStar(5)">★</span>
+    </div>
+    <div class="rating-tags">
+      <button class="tag" data-v="回答准确" onclick="toggleTag(this)">回答准确</button>
+      <button class="tag" data-v="响应及时" onclick="toggleTag(this)">响应及时</button>
+      <button class="tag" data-v="态度友好" onclick="toggleTag(this)">态度友好</button>
+      <button class="tag" data-v="未能解决" onclick="toggleTag(this)">未能解决</button>
+      <button class="tag" data-v="转接人工" onclick="toggleTag(this)">转接人工</button>
+    </div>
+    <textarea id="ratingComment" class="rating-comment" placeholder="补充说明（选填）" rows="2"></textarea>
+    <div class="rating-actions">
+      <button class="rating-cancel" onclick="closeRating()">取消</button>
+      <button class="rating-submit" id="ratingSubmit" onclick="submitRating()">提交评价</button>
     </div>
   </div>
 </div>
@@ -568,6 +612,64 @@ function hideConnStatus(){
 }
 
 // ============ 发送消息 ============
+// ============ 满意度评价 ============
+var ratingScore = 0;
+var ratingTags = [];
+
+function openRating(){
+  ratingScore = 0;
+  ratingTags = [];
+  document.querySelectorAll('#ratingStars .star').forEach(function(s){ s.classList.remove('on'); });
+  document.querySelectorAll('.rating-tags .tag').forEach(function(t){ t.classList.remove('on'); });
+  document.getElementById('ratingComment').value = '';
+  document.getElementById('ratingSubmit').disabled = false;
+  document.getElementById('ratingMask').style.display = 'flex';
+}
+function closeRating(){
+  document.getElementById('ratingMask').style.display = 'none';
+}
+function pickStar(v){
+  ratingScore = v;
+  document.querySelectorAll('#ratingStars .star').forEach(function(s){
+    s.classList.toggle('on', parseInt(s.dataset.v,10) <= v);
+  });
+}
+function toggleTag(btn){
+  btn.classList.toggle('on');
+  var v = btn.dataset.v;
+  var i = ratingTags.indexOf(v);
+  if (i >= 0) ratingTags.splice(i,1); else ratingTags.push(v);
+}
+async function submitRating(){
+  var btn = document.getElementById('ratingSubmit');
+  if (!ratingScore) { alert('请先选择星级'); return; }
+  btn.disabled = true;
+  try {
+    var token = await ensureToken();
+    var resp = await fetch(CONFIG.server + '/api/user/rating', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token},
+      body: JSON.stringify({
+        user_id: userId,
+        score: ratingScore,
+        tags: ratingTags.join(','),
+        comment: document.getElementById('ratingComment').value.trim()
+      })
+    });
+    var data = await resp.json();
+    if (data.code === 0) {
+      closeRating();
+      addSystemMessage('感谢您的评价！');
+    } else {
+      alert(data.msg || '提交失败，请重试');
+      btn.disabled = false;
+    }
+  } catch(e) {
+    alert('提交失败：' + (e.message || e));
+    btn.disabled = false;
+  }
+}
+
 function sendMessage(){
   var input = document.getElementById('msgInput');
   var text = input.value.trim();

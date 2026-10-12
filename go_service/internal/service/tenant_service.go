@@ -169,6 +169,12 @@ func CreateTenant(name, appKey string) (*CreateTenantResult, error) {
 	if appKey == "" {
 		appKey = auth.GenAppKey()
 	}
+	// 唯一性防御：app_key 撞软删租户时（uni_tenants_app_key 含软删行）会报 1062，
+	// 用 Unscoped 预查，命中直接返回可读错误
+	var dup model.TenantRow
+	if err := config.DB.Unscoped().Where("app_key = ?", appKey).First(&dup).Error; err == nil {
+		return nil, errors.New("app_key 已被使用（含已删除租户）")
+	}
 	appSecret := auth.GenSecret()
 	tenantID := "t_" + appKey
 

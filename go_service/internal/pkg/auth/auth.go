@@ -82,20 +82,23 @@ func IsTokenBlacklisted(token string) bool {
 	return n > 0
 }
 
+// isTokenBlacklistedFn 黑名单判定钩子（测试注入用，生产恒为 IsTokenBlacklisted）
+var isTokenBlacklistedFn = IsTokenBlacklisted
+
 // CleanupBlacklist 定期清理过期的黑名单条目（Redis TTL 自动清理，保留空实现兼容调用）
 func CleanupBlacklist() {}
 
 // RefreshToken 刷新 Token：验证旧 Token 有效后签发新 Token
 // 返回 (newToken, tenantID, expiresIn, error)
 func RefreshToken(oldToken string) (string, string, int64, error) {
-	tenantID, err := VerifyToken(oldToken)
+	tenantID, uid, err := VerifyTokenFull(oldToken)
 	if err != nil {
 		return "", "", 0, err
 	}
 	// 查找租户信息，签发新 Token
 	for _, t := range TenantsList {
 		if t.TenantID == tenantID {
-			p := tokenPayload{TenantID: t.TenantID, Exp: time.Now().Add(authTTL).Unix(), Nonce: generateNonce()}
+			p := tokenPayload{TenantID: t.TenantID, Exp: time.Now().Add(authTTL).Unix(), Nonce: generateNonce(), UID: uid}
 			pl, _ := json.Marshal(p)
 			newToken := base64.RawURLEncoding.EncodeToString(pl) + "." + signPayload(t.AppSecretHash, pl)
 			// 旧 Token 加入黑名单，防止重复使用
@@ -167,6 +170,7 @@ type tokenPayload struct {
 	TenantID string `json:"tid"`
 	Exp      int64  `json:"exp"`
 	Nonce    string `json:"nonce,omitempty"` // 随机数，确保每次签发的 Token 都不同
+	UID      uint64 `json:"uid,omitempty"`   // RBAC 子账号用户 ID（app_key 登录为空）
 }
 
 func signPayload(secretHash string, pl []byte) string {
@@ -200,36 +204,57 @@ func IssueToken(appKey, appSecret string) (token, tenantID string, expiresIn int
 		t.TenantID, int64(authTTL.Seconds()), nil
 }
 
-// VerifyToken 校验令牌，返回租户 ID
-func VerifyToken(token string) (string, error) {
+// IssueUserToken 用用户名密码校验通过后，为租户内子账号签发访问令牌（token 携带 uid）
+func IssueUserToken(tenantID string, userID uint64) (token string, expiresIn int64, err error) {
+	t, ok := TenantInfo(tenantID)
+	if !ok {
+		return "", 0, errors.New("租户不存在")
+	}
+	if t.Status != 1 {
+		return "", 0, errors.New("租户已停用")
+	}
+	p := tokenPayload{TenantID: t.TenantID, Exp: time.Now().Add(authTTL).Unix(), Nonce: generateNonce(), UID: userID}
+	pl, _ := json.Marshal(p)
+	return base64.RawURLEncoding.EncodeToString(pl) + "." + signPayload(t.AppSecretHash, pl),
+		int64(authTTL.Seconds()), nil
+}
+
+// VerifyTokenFull 校验令牌，返回租户 ID 与子账号用户 ID（uid=0 表示 app_key 管理员）
+func VerifyTokenFull(token string) (string, uint64, error) {
 	// 检查 Token 是否在黑名单中（主动登出）
-	if IsTokenBlacklisted(token) {
-		return "", errors.New("token 已失效（已登出）")
+	if isTokenBlacklistedFn(token) {
+		return "", 0, errors.New("token 已失效（已登出）")
 	}
 	parts := strings.Split(token, ".")
 	if len(parts) != 2 {
-		return "", errors.New("token 格式错误")
+		return "", 0, errors.New("token 格式错误")
 	}
 	pl, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return "", errors.New("token 解码失败")
+		return "", 0, errors.New("token 解码失败")
 	}
 	var p tokenPayload
 	if err := json.Unmarshal(pl, &p); err != nil {
-		return "", errors.New("token 载荷无效")
+		return "", 0, errors.New("token 载荷无效")
 	}
 	if p.Exp < time.Now().Unix() {
-		return "", errors.New("token 已过期")
+		return "", 0, errors.New("token 已过期")
 	}
 	for _, t := range TenantsList {
 		if t.TenantID == p.TenantID {
 			if !hmac.Equal([]byte(signPayload(t.AppSecretHash, pl)), []byte(parts[1])) {
-				return "", errors.New("token 签名无效")
+				return "", 0, errors.New("token 签名无效")
 			}
-			return p.TenantID, nil
+			return p.TenantID, p.UID, nil
 		}
 	}
-	return "", errors.New("租户不存在")
+	return "", 0, errors.New("租户不存在")
+}
+
+// VerifyToken 校验令牌，返回租户 ID（兼容既有调用，忽略 uid）
+func VerifyToken(token string) (string, error) {
+	tid, _, err := VerifyTokenFull(token)
+	return tid, err
 }
 
 // TenantInfo 当前租户运行时信息（管理端上下文）

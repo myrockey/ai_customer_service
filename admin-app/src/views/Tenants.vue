@@ -23,6 +23,12 @@
         <template #cell-app_key="{ row }">
           <span class="mono">{{ row.app_key }}</span>
         </template>
+        <template #cell-login_url="{ row }">
+          <span class="login-link">
+            <code class="mono link-text">#/login-account?tid={{ row.tenant_id }}</code>
+            <button class="btn btn-sm" title="复制完整成员登录链接" @click="copyLoginUrl(row)">复制</button>
+          </span>
+        </template>
         <template #cell-status="{ row }">
           <span class="badge" :class="row.status === 1 ? 'badge-green' : 'badge-red'">{{ row.status === 1 ? '启用' : '禁用' }}</span>
         </template>
@@ -135,6 +141,7 @@ const createdResult = ref(null)
 const columns = [
   { key: 'name', title: '名称' },
   { key: 'app_key', title: 'app_key', width: '160px' },
+  { key: 'login_url', title: '成员登录链接', width: '230px' },
   { key: 'status', title: '状态', width: '80px' },
   { key: 'model_provider', title: '模型配置', width: '120px' },
   { key: 'quota', title: '用量 / 配额（并发·消息·文档·容量）', width: '280px' },
@@ -144,6 +151,24 @@ const columns = [
 
 const fmt = t => t ? String(t).replace('T', ' ').slice(0, 19) : '-'
 const over = (used, limit) => (limit > 0 && (used ?? 0) >= limit) ? 'q-over' : ''
+
+// 复制成员账号登录专属链接（#/login-account?tid=xxx，打开自动填充并锁定租户）
+async function copyLoginUrl(row) {
+  const full = location.origin + location.pathname + '#/login-account?tid=' + encodeURIComponent(row.tenant_id)
+  try {
+    await navigator.clipboard.writeText(full)
+    toast('成员登录链接已复制', 'success')
+  } catch (e) {
+    const ta = document.createElement('textarea')
+    ta.value = full
+    document.body.appendChild(ta)
+    ta.select()
+    let ok = false
+    try { ok = document.execCommand('copy') } catch (e2) { ok = false }
+    document.body.removeChild(ta)
+    toast(ok ? '成员登录链接已复制' : '复制失败，请手动复制', ok ? 'success' : 'error')
+  }
+}
 
 const filtered = computed(() => {
   let rows = all.value
@@ -197,13 +222,13 @@ async function save() {
   try {
     if (editing.value) {
       const r = await api('/api/admin/tenants/' + encodeURIComponent(editing.value.tenant_id), { method: 'PUT', body: { name: form.name } })
-      if (r.code !== 0) return toast(r.msg || '保存失败', 'error')
+      if (r.code !== 0) return
       const q = await api('/api/admin/tenants/' + encodeURIComponent(editing.value.tenant_id) + '/quota', { method: 'PUT', body: quotaBody })
-      if (q.code !== 0) return toast(q.msg || '配额保存失败', 'error')
+      if (q.code !== 0) return
       toast('保存成功', 'success')
     } else {
       const r = await api('/api/admin/tenants', { method: 'POST', body: { name: form.name, app_key: form.app_key || undefined, is_platform_admin: form.is_platform_admin } })
-      if (r.code !== 0) return toast(r.msg || '创建失败', 'error')
+      if (r.code !== 0) return
       const tid = r.data?.tenant_id
       if (tid) {
         await api('/api/admin/tenants/' + encodeURIComponent(tid) + '/quota', { method: 'PUT', body: quotaBody })
@@ -265,6 +290,8 @@ onMounted(() => load())
 .quota-cell { display: flex; gap: 4px; flex-wrap: wrap; font-size: 12px; }
 .q-item { color: var(--c-text-2); }
 .q-item.q-over { color: var(--c-danger, #e74c3c); font-weight: 600; }
+.login-link { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.login-link .link-text { font-size: 12px; color: var(--c-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 .q-sep { color: var(--c-border-strong); }
 .result-box { display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
 .kv { display: flex; justify-content: space-between; padding: 8px 10px; background: var(--c-bg); border-radius: 6px; }

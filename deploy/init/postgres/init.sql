@@ -78,6 +78,23 @@ CREATE TABLE IF NOT EXISTS kb_documents (
 CREATE INDEX IF NOT EXISTS idx_kb_tenant ON kb_documents (tenant_id);
 CREATE INDEX IF NOT EXISTS idx_kb_category ON kb_documents (category);
 CREATE INDEX IF NOT EXISTS idx_kb_status ON kb_documents (status);
+-- ============================================================================
+-- 知识库命中/未命中记录表（KB 闭环：search_kb 检索结果落库，doc_id 为空 = 未命中）
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS kb_hits (
+    id          BIGSERIAL PRIMARY KEY,
+    tenant_id   VARCHAR(64) NOT NULL DEFAULT '',
+    thread_id   VARCHAR(64) NOT NULL DEFAULT '',
+    doc_id      VARCHAR(64) NOT NULL DEFAULT '',
+    doc_title   VARCHAR(255) NOT NULL DEFAULT '',
+    query       TEXT NOT NULL,
+    score       REAL DEFAULT 0,
+    hit_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_kb_hits_tenant_doc ON kb_hits (tenant_id, doc_id);
+CREATE INDEX IF NOT EXISTS idx_kb_hits_tenant_time ON kb_hits (tenant_id, hit_at);
+COMMENT ON TABLE kb_hits IS '知识库检索命中记录（doc_id 为空表示未命中该次检索）';
+
 
 -- ============================================================================
 -- Token 用量计量表（P1-1：租户级计费与用量报表）

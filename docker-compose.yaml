@@ -113,6 +113,8 @@ services:
       # PROD_MODE: "true"
       SESSION_RETENTION_DAYS: "7"
       SESSION_CLEANUP_INTERVAL: "21600"
+      # 会话自动摘要后台任务：间隔秒数（默认 600s=10 分钟一轮）
+      SESSION_SUMMARY_INTERVAL: "600"
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-cs_internal_token_2026_secure}
       # 容器内使用服务名连接（覆盖 .env 中宿主机视角的 127.0.0.1 配置）
       POSTGRES_DSN: postgresql://${POSTGRES_USER:-cs_user}:${POSTGRES_PASSWORD:-cs_pass123}@postgres:5432/${POSTGRES_DB:-cs_agent_db}

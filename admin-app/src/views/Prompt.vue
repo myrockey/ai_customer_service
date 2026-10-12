@@ -157,7 +157,7 @@ async function save() {
   try {
     // upsert 语义：编辑与新建均走 POST /prompts（key 为主键，按 key 覆盖）
     const r = await api('/api/admin/prompts', { method: 'POST', body: { key: form.key, title: form.title, content: form.content, is_active: form.is_active }, params: scopeParams() })
-    if (r.code !== 0) return toast(r.msg || '保存失败', 'error')
+    if (r.code !== 0) return
     toast(r.msg || '保存成功', 'success')
     showModal.value = false
     load()
@@ -195,7 +195,7 @@ async function createVersion() {
     const r = await api('/api/admin/prompts/' + encodeURIComponent(verKey.value) + '/versions', {
       method: 'POST', body: { remark: verRemark.value || '' }, params: scopeParams()
     })
-    if (r.code !== 0) return toast(r.msg || '创建版本失败', 'error')
+    if (r.code !== 0) return
     toast('已创建 v' + r.data.version + ' 版本', 'success')
     const lr = await api('/api/admin/prompts/' + encodeURIComponent(verKey.value) + '/versions', { params: scopeParams() })
     if (lr.code === 0) versions.value = lr.data || []

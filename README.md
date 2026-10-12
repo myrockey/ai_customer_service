@@ -23,7 +23,7 @@
 
 | 平台管理员 · 租户管理 | 租户 · 工单管理（人工接管） | 终端用户 · SDK 在线客服 |
 |---|---|---|
-| ![平台后台](./deploy/cs_images/平台-租户管理.PNG) | ![租户工单](./deploy/cs_images/租户后台.PNG) | ![SDK演示](./deploy/cs_images/sdk演示聊天.PNG) |
+| ![平台后台](./docs/cs_images/平台-租户管理.PNG) | ![租户工单](./docs/cs_images/租户-工单管理.PNG) | ![SDK演示](./docs/cs_images/sdk演示聊天.PNG) |
 
 > 📖 **图文操作手册**（10 张截图逐步讲解每个模块怎么操作）：[docs/README.md](./docs/README.md) · **5 分钟快速体验**：[docs/快速体验.md](./docs/快速体验.md)
 
@@ -36,6 +36,8 @@
 | 📚 知识库管理 | 文档上传、向量索引、语义检索、批量重索引、按租户隔离 |
 | 📝 Prompt 管理 | 版本控制、回滚、租户级 + 平台级 Prompt 优先级 |
 | 🏢 多租户 | 数据/知识库/模型配置隔离、用量配额、平台/租户双级管理 |
+| 👤 账号与安全 | 平台/租户管理员账号密码登录（专属链接 `#/login-account?tid=` 自动填充租户）、修改密码、连续输错密钥触发登录限流防爆破 |
+| 🔐 菜单权限 | 四级菜单体系（分组→目录→页面→按钮）、角色四层授权树、批量启停/隐藏、行内改排序、拖拽调整归属、搜索筛选、平台/租户按 scope 隔离、内置菜单一键重置、修改后免重登即时生效 |
 | 🔌 第三方集成 | SDK（cs-chat.js 浮窗）、iframe、API、WebSocket 四种接入方式 |
 | 💰 用量计费 | Token 用量统计（按模型/来源），支持单价配置与费用核算 |
 | 📊 可观测性 | Loki 日志 + Prometheus 指标 + Jaeger 链路 + Grafana 可视化 |
@@ -45,7 +47,8 @@
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/myrockey/ai_customer_service.git && cd ai_customer_service
+git clone https://github.com/myrockey/ai_customer_service.git
+cd ai_customer_service
 
 # 2. 配置环境变量
 cp .env.example .env
@@ -68,6 +71,8 @@ docker compose ps
 |------|---------|-----------|
 | 平台管理员 | `admin_key` | `admin_secret` |
 | 租户（demo） | `demo_key` | `demo_secret` |
+
+> **账号登录**：租户成员也可通过专属链接 `#/login-account?tid=<租户ID>`（如 `#/login-account?tid=t_demo`）使用账号密码登录，链接自动填充租户 ID，无需手动输入。
 
 > ⚠️ 登录后第一件事：到「平台模型配置」配置对话模型 + 向量模型，AI 对话才会生效（界面支持一键测试连通性）。
 
@@ -146,11 +151,12 @@ customer_service_prod/
 │   └── sdk/                  #   cs-chat.js SDK + 多端接入示例
 ├── deploy/
 │   ├── nginx.conf            #   Nginx 配置
-│   ├── cs_images/            #   文档用操作截图
 │   ├── init/                 #   初始化 SQL（mysql/、postgres/）
 │   └── deploy.sh / push-to-acr.sh  # 基础部署 / 镜像上传脚本
 │   # （production/、backup/、observability/ 属商业版内容，不随开源仓库发布，见 COMMERCIAL.md）
 ├── docs/                     # 文档中心（见下方导航）
+│   ├── cs_images/            #   文档用操作截图
+│   ├── README.md / 快速体验.md / 产品使用说明文档.md …
 ├── scripts/                  # 验证/构建/运维脚本
 └── thirdDemo/                # 第三方接入最小示例（Go + SDK）
 ```
@@ -159,7 +165,7 @@ customer_service_prod/
 
 | 文档 | 内容 | 适用 |
 |------|------|------|
-| [📖 图文操作手册](./docs/README.md) | **10 张截图逐步讲解每个模块怎么操作** | 所有人 |
+| [📖 图文操作手册](./docs/README.md) | **按模块与菜单逐一配图（平台侧 + 租户侧 20+ 张）** | 所有人 |
 | [⚡ 快速体验](./docs/快速体验.md) | 5 分钟跑通部署→配置→对话→转人工 | 所有人 |
 | [产品设计文档](./docs/产品设计文档.md) | 产品定位、系统架构、多租户设计、安全设计 | 产品/架构师 |
 | [产品使用说明文档](./docs/产品使用说明文档.md) | 全角色文字版使用指南、第三方接入、运维 | 用户/运维 |

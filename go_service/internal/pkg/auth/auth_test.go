@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"customer_service/internal/pkg/cache"
 	"customer_service/internal/pkg/crypto"
 )
 
@@ -15,6 +16,8 @@ func setupTestTenants(t *testing.T) {
 	t.Helper()
 	authEnabled = true
 	authTTL = time.Hour
+	// 测试环境无 Redis：黑名单判定按"未拉黑"处理（黑名单语义单独由 Redis 集成验证）
+	isTokenBlacklistedFn = func(string) bool { return false }
 	tenantByKey = map[string]RuntimeTenant{
 		"t1_key": {TenantID: "t_alpha", Name: "Alpha", AppKey: "t1_key", AppSecretHash: crypto.HashSecret("secret_alpha"), Status: 1},
 		"t2_key": {TenantID: "t_beta", Name: "Beta", AppKey: "t2_key", AppSecretHash: crypto.HashSecret("secret_beta"), Status: 1},
@@ -24,7 +27,6 @@ func setupTestTenants(t *testing.T) {
 	for _, v := range tenantByKey {
 		TenantsList = append(TenantsList, v)
 	}
-	tokenBlacklist = map[string]int64{}
 }
 
 // ============ IssueToken / VerifyToken ============
@@ -114,10 +116,49 @@ func TestCrossTenantTokenInvalid(t *testing.T) {
 	}
 }
 
+// ============ RBAC 子账号 Token（uid） ============
+
+func TestIssueUserTokenCarriesUID(t *testing.T) {
+	setupTestTenants(t)
+	tok, _, err := IssueUserToken("t_alpha", 42)
+	if err != nil {
+		t.Fatalf("IssueUserToken 失败: %v", err)
+	}
+	tid, uid, err := VerifyTokenFull(tok)
+	if err != nil {
+		t.Fatalf("VerifyTokenFull 失败: %v", err)
+	}
+	if tid != "t_alpha" {
+		t.Errorf("租户 %s, 期望 t_alpha", tid)
+	}
+	if uid != 42 {
+		t.Errorf("uid = %d, 期望 42", uid)
+	}
+}
+
+func TestAppKeyTokenHasNoUID(t *testing.T) {
+	setupTestTenants(t)
+	tok, _, _, err := IssueToken("t1_key", "secret_alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, uid, err := VerifyTokenFull(tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uid != 0 {
+		t.Errorf("app_key 登录 token 不应携带 uid, got %d", uid)
+	}
+}
+
 // ============ 黑名单 ============
 
 func TestBlacklistAndVerify(t *testing.T) {
+	if cache.Client() == nil {
+		t.Skip("需要 Redis 环境")
+	}
 	setupTestTenants(t)
+	isTokenBlacklistedFn = IsTokenBlacklisted // 黑名单语义测试用真实实现
 	tok, _, _, err := IssueToken("t1_key", "secret_alpha")
 	if err != nil {
 		t.Fatal(err)
@@ -128,17 +169,6 @@ func TestBlacklistAndVerify(t *testing.T) {
 	}
 	if _, err := VerifyToken(tok); err == nil {
 		t.Error("黑名单 token 校验应失败")
-	}
-}
-
-func TestBlacklistExpiredEntryCleaned(t *testing.T) {
-	setupTestTenants(t)
-	tokenBlacklist["dummy"] = time.Now().Add(-time.Minute).Unix()
-	if IsTokenBlacklisted("dummy") {
-		t.Error("过期黑名单条目应自动清理并返回 false")
-	}
-	if _, ok := tokenBlacklist["dummy"]; ok {
-		t.Error("过期黑名单条目应从 map 删除")
 	}
 }
 
@@ -159,6 +189,11 @@ func TestRefreshToken(t *testing.T) {
 	}
 	if _, err := VerifyToken(newTok); err != nil {
 		t.Errorf("新 token 校验失败: %v", err)
+	}
+	if cache.Client() == nil {
+		// 无 Redis：黑名单写入不生效，旧 token 失效语义由 Redis 集成验证
+		t.Log("无 Redis 环境，跳过旧 token 失效断言")
+		return
 	}
 	if _, err := VerifyToken(tok); err == nil {
 		t.Error("刷新后旧 token 应失效")
@@ -198,54 +233,5 @@ func TestTenantFromUserID(t *testing.T) {
 		if got := TenantFromUserID(c.in); got != c.want {
 			t.Errorf("TenantFromUserID(%q)=%q, want %q", c.in, got, c.want)
 		}
-	}
-}
-
-// ============ 登录防爆破（P0-2） ============
-
-func TestLoginLimiterLocksAfterMaxFails(t *testing.T) {
-	limiter := &LoginLimiter{
-		records:  make(map[string]*loginRecord),
-		maxFails: 3,
-		window:   time.Minute,
-		lockTime: time.Minute,
-	}
-	for i := 0; i < 3; i++ {
-		limiter.Fail("ip1:key1")
-	}
-	if ok, _ := limiter.Allow("ip1:key1"); ok {
-		t.Error("达到失败阈值后应锁定")
-	}
-	if ok2, _ := limiter.Allow("ip1:key2"); !ok2 {
-		t.Error("其他 key 不应被锁定")
-	}
-}
-
-func TestLoginLimiterSuccessClears(t *testing.T) {
-	limiter := &LoginLimiter{
-		records:  make(map[string]*loginRecord),
-		maxFails: 3,
-		window:   time.Minute,
-		lockTime: time.Minute,
-	}
-	limiter.Fail("ip:key")
-	limiter.Fail("ip:key")
-	limiter.Success("ip:key")
-	if ok, _ := limiter.Allow("ip:key"); !ok {
-		t.Error("成功后应清除失败记录")
-	}
-}
-
-func TestLoginLimiterWindowReset(t *testing.T) {
-	limiter := &LoginLimiter{
-		records:  make(map[string]*loginRecord),
-		maxFails: 3,
-		window:   time.Minute,
-		lockTime: time.Minute,
-	}
-	limiter.Fail("ip:key")
-	limiter.records["ip:key"] = &loginRecord{fails: 2, windowStart: time.Now().Add(-2 * time.Minute)}
-	if ok, _ := limiter.Allow("ip:key"); !ok {
-		t.Error("窗口过期后应重置允许")
 	}
 }

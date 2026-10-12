@@ -70,6 +70,39 @@ async def touch_session(conn: psycopg.AsyncConnection, thread_id: str):
         """, (thread_id, tenant_id))
 
 
+# ====================== 瞬时段连错误识别与重试 ======================
+# PG 重启 / 服务器重启 / 网络抖动瞬间，连接池中可能残留 closed/broken 的死连接：
+# - 池级防御：AsyncConnectionPool(check=AsyncConnectionPool.check_connection)，借出前 ping 验证；
+# - 业务级兜底：已借出连接在执行中断开（AdminShutdown / connection is closed）时，丢弃重取重试一次。
+# 仅对"瞬时连接故障"重试（幂等写操作），业务错误（如约束冲突）不重试。
+_TRANSIENT_DB_EXC = (
+    psycopg.errors.AdminShutdown,      # SQLSTATE 57P01：管理员终止连接（PG 重启/terminate）
+    psycopg.errors.ConnectionException,  # 08 类：连接异常（无法连接/已关闭）
+    psycopg.OperationalError,          # 运行时连接错误（"the connection is closed" 等）
+    psycopg.InterfaceError,            # 客户端侧连接状态错误
+)
+
+
+def is_transient_db_error(exc: BaseException) -> bool:
+    """判断是否为可安全重试的瞬时数据库连接错误"""
+    return isinstance(exc, _TRANSIENT_DB_EXC)
+
+
+async def touch_session_retry(app, thread_id: str):
+    """touch_session + 瞬时段连错误自动重试一次（upsert 幂等，重试安全）。
+    用法：await touch_session_retry(request.app, thread_id)"""
+    from db_pool import _pool_conn
+    try:
+        async with _pool_conn(app) as conn:
+            await touch_session(conn, thread_id)
+    except BaseException as exc:
+        if not is_transient_db_error(exc):
+            raise
+        logger.warning("touch_session 遇瞬时段连错误（%s），重取连接重试一次", exc.__class__.__name__)
+        async with _pool_conn(app) as conn:
+            await touch_session(conn, thread_id)
+
+
 def extract_usage_metadata(messages) -> Optional[dict]:
     """从最终消息列表提取最后一个带 usage_metadata 的 AI 消息用量（best-effort）
     返回含输入缓存拆分：cache_hit_tokens/cache_miss_tokens 取自 response_metadata.usage

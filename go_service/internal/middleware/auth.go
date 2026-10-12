@@ -11,6 +11,7 @@ import (
 	"customer_service/internal/model"
 	"customer_service/internal/pkg/auth"
 	"customer_service/internal/pkg/logger"
+	"customer_service/internal/repository"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -98,14 +99,59 @@ func AdminAuth() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		tenantID, err := auth.VerifyToken(tok)
+		tenantID, uid, err := auth.VerifyTokenFull(tok)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "令牌无效或已过期"})
 			c.Abort()
 			return
 		}
 		c.Set("tenant_id", tenantID)
+		c.Set("user_id", uid)
 		c.Next()
+	}
+}
+
+// UserIDOf 从 context 取当前登录子账号用户 ID（0=app_key 管理员/未启用鉴权）
+func UserIDOf(c *gin.Context) uint64 {
+	v, _ := c.Get("user_id")
+	id, _ := v.(uint64)
+	return id
+}
+
+// RequirePerm RBAC 权限校验中间件：
+//   - 未启用鉴权（演示模式）→ 放行
+//   - app_key 登录（uid=0，租户/平台管理员）→ 放行（隐式管理员）
+//   - 子账号（uid>0）→ 账号状态正常且角色含指定权限码才放行，否则 403
+func RequirePerm(perm string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !auth.AuthEnabled() {
+			c.Next()
+			return
+		}
+		uid := UserIDOf(c)
+		if uid == 0 {
+			c.Next()
+			return
+		}
+		user, err := repository.GetUserByID(uid)
+		if err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"code": 403, "msg": "账号不存在或已删除"})
+			c.Abort()
+			return
+		}
+		if user.Status != 1 {
+			c.JSON(http.StatusForbidden, gin.H{"code": 403, "msg": "账号已禁用，请联系管理员"})
+			c.Abort()
+			return
+		}
+		for _, p := range repository.GetUserPerms(uid) {
+			if p == perm {
+				c.Next()
+				return
+			}
+		}
+		c.JSON(http.StatusForbidden, gin.H{"code": 403, "msg": "无权限执行该操作"})
+		c.Abort()
 	}
 }
 

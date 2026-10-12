@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -19,17 +20,20 @@ import (
 
 // TicketListInput 工单列表查询参数
 type TicketListInput struct {
-	Status int // -1 表示全部
-	Page   int
-	Size   int
+	Status     int    // -1 表示全部
+	Page       int
+	Size       int
+	HandlerUID uint64 // >0 时只看该客服的工单（scope=mine）
+	Keyword    string // 工单号 / 用户ID / 接管人 模糊匹配
+	Priority   int    // -1 表示全部；0 低 1 中 2 高 3 紧急
 }
 
 // TicketListResult 工单列表返回结果
 type TicketListResult struct {
 	List  []model.Ticket `json:"list"`
-	Total int64             `json:"total"`
-	Page  int               `json:"page"`
-	Size  int               `json:"size"`
+	Total int64          `json:"total"`
+	Page  int            `json:"page"`
+	Size  int            `json:"size"`
 }
 
 // ListTickets 查询工单列表（含未读消息数填充）
@@ -40,11 +44,11 @@ func ListTickets(tenantID string, input TicketListInput) (*TicketListResult, err
 	if input.Size < 1 || input.Size > 100 {
 		input.Size = 20
 	}
-	list, total, err := repository.ListTickets(tenantID, input.Status, input.Page, input.Size)
+	list, total, err := repository.ListTickets(tenantID, input.Status, input.Page, input.Size,
+		repository.TicketListOpt{HandlerUID: input.HandlerUID, Keyword: input.Keyword, Priority: input.Priority})
 	if err != nil {
 		return nil, err
-	}
-	// 填充每个工单的未读消息数
+	}	// 填充每个工单的未读消息数
 	for i := range list {
 		if count, err := repository.GetUnreadCount(list[i].ThreadID); err == nil {
 			list[i].UnreadCount = count
@@ -155,6 +159,23 @@ func EnsureTicket(threadID, userID, reason string) (*model.Ticket, bool, error) 
 			OldPriority: 0, NewPriority: nt.Priority,
 			Operator: "system", Remark: "用户发起转人工，创建工单",
 		})
+		// 自动分配：优先在线且未满的客服（处理量最少）；无合适客服保持待处理，由人工接管兜底
+		if targetUID, targetName, err := repository.PickIdleAgent(tx, nt.TenantID); err == nil && targetUID > 0 {
+			nt.HandlerUID = targetUID
+			nt.HandlerName = targetName
+			nt.Status = model.TicketStatusHandling // 已分配接管人 → 直接进入接管中，前端显示聊天框
+			if err := tx.Model(&nt).Updates(map[string]interface{}{
+				"handler_uid": targetUID, "handler_name": targetName, "status": model.TicketStatusHandling,
+			}).Error; err == nil {
+				tx.Create(&model.TicketLog{
+					TicketID: nt.ID, ThreadID: threadID, TenantID: nt.TenantID,
+					Action: "assign", OldStatus: model.TicketStatusPending, NewStatus: model.TicketStatusHandling,
+					OldPriority: 0, NewPriority: nt.Priority,
+					Operator: targetName, Remark: "系统自动分配（处理量最少优先）",
+				})
+				_ = repository.AdjustHandlingCount(tx, nt.TenantID, targetUID, 1)
+			}
+		}
 		t = nt
 		return nil
 	})
@@ -165,7 +186,9 @@ func EnsureTicket(threadID, userID, reason string) (*model.Ticket, bool, error) 
 }
 
 // TakeoverTicket 人工接管工单（含 Agent 恢复、状态更新、WebSocket 推送）
-func TakeoverTicket(tk *model.Ticket, waitTime int, traceID string) (string, error) {
+// handlerUID/handlerName：接管客服身份（子账号 uid+名；app_key 管理员传 0 与租户ID），
+// 写入 tickets.handler_uid/handler_name，操作日志 operator 记真实客服
+func TakeoverTicket(tk *model.Ticket, waitTime int, traceID string, handlerUID uint64, handlerName string) (string, error) {
 	msg := ""
 	if tk.Status == model.TicketStatusHandling {
 		return "该工单已在人工接管中", nil
@@ -184,10 +207,23 @@ func TakeoverTicket(tk *model.Ticket, waitTime int, traceID string) (string, err
 			msg = agentResp.Content
 		}
 	}
+	if handlerName == "" {
+		handlerName = "system"
+	}
+	// 记录接管客服身份（冗余快照，客服改名不影响历史工单归属）
+	tk.HandlerUID = handlerUID
+	tk.HandlerName = handlerName
+	if err := config.DB.Model(tk).Updates(map[string]interface{}{
+		"handler_uid": handlerUID, "handler_name": handlerName,
+	}).Error; err != nil {
+		return "", fmt.Errorf("记录接管客服失败: %w", err)
+	}
+	// 客服处理量 +1（子账号客服；app_key 管理员 uid=0 不统计）
+	_ = repository.AdjustHandlingCount(config.DB, tk.TenantID, handlerUID, 1)
 	_ = repository.UpdateTicketStatus(tk, model.TicketStatusHandling)
 	_ = repository.AddTicketLog(tk.ID, tk.ThreadID, tk.TenantID, "takeover",
 		model.TicketStatusPending, model.TicketStatusHandling, tk.Priority, tk.Priority,
-		"system", "人工接管工单")
+		handlerName, "人工接管工单")
 	_ = repository.SaveTicketMessage(tk.ThreadID, "system", "人工客服已接管对话，工单号："+tk.TicketNo, tk.ID)
 
 	// 推送给用户端
@@ -221,15 +257,20 @@ func ReplyTicket(tk *model.Ticket, content string) error {
 }
 
 // CloseTicket 关闭工单（含状态更新、system消息、WebSocket 推送）
-// 关闭后该线程恢复智能客服接待
-func CloseTicket(tk *model.Ticket) error {
+// 关闭后该线程恢复智能客服接待；operator 为操作客服（空则沿用 system）
+func CloseTicket(tk *model.Ticket, operator string) error {
 	if tk.Status == model.TicketStatusClosed {
 		return nil // 已关闭，幂等
 	}
+	if operator == "" {
+		operator = "system"
+	}
 	_ = repository.UpdateTicketStatus(tk, model.TicketStatusClosed)
+	// 释放客服处理量 -1
+	_ = repository.AdjustHandlingCount(config.DB, tk.TenantID, tk.HandlerUID, -1)
 	_ = repository.AddTicketLog(tk.ID, tk.ThreadID, tk.TenantID, "close",
 		model.TicketStatusHandling, model.TicketStatusClosed, tk.Priority, tk.Priority,
-		"system", "关闭工单，转回智能客服")
+		operator, "关闭工单，转回智能客服")
 	_ = repository.SaveTicketMessage(tk.ThreadID, "system", "本次人工会话已结束，转回智能客服", tk.ID)
 
 	ws.WSHub.SendToUser(tk.ThreadID, map[string]interface{}{
@@ -247,6 +288,41 @@ type ApproveTicketInput struct {
 	Confirmed bool
 	WaitTime  int
 	TraceID   string
+}
+
+// TransferTicket 转交工单给其他客服（更新接管人归属、操作日志、system 消息、WebSocket 推送）
+// 调用方须已校验：接管中 + 转交人身份（接管人/管理员）
+func TransferTicket(tk *model.Ticket, toUID uint64, toName, operator string) error {
+	if tk.Status != model.TicketStatusHandling && tk.Status != model.TicketStatusPending {
+		return fmt.Errorf("仅待处理或接管中的工单可转交")
+	}
+	if toName == "" {
+		toName = "system"
+	}
+	oldUID := tk.HandlerUID // 转出客服（更新前取值，用于处理量 -1）
+	oldStatus := tk.Status
+	newStatus := tk.Status
+	if newStatus == model.TicketStatusPending {
+		newStatus = model.TicketStatusHandling // 待处理工单被指派 → 进入接管中
+	}
+	// 更新接管人归属（冗余快照，客服改名不影响历史归属）
+	tk.HandlerUID = toUID
+	tk.HandlerName = toName
+	tk.Status = newStatus
+	if err := config.DB.Model(tk).Updates(map[string]interface{}{
+		"handler_uid": toUID, "handler_name": toName, "status": newStatus,
+	}).Error; err != nil {
+		return fmt.Errorf("更新接管人失败: %w", err)
+	}
+	// 处理量：原客服 -1（无则不更新），目标客服 +1
+	_ = repository.AdjustHandlingCount(config.DB, tk.TenantID, oldUID, -1)
+	_ = repository.AdjustHandlingCount(config.DB, tk.TenantID, toUID, 1)
+	_ = repository.AddTicketLog(tk.ID, tk.ThreadID, tk.TenantID, "transfer",
+		oldStatus, newStatus, tk.Priority, tk.Priority, operator, "转交工单给客服 "+toName)
+	_ = repository.SaveTicketMessage(tk.ThreadID, "system", "工单已转交给客服 "+toName+"，请继续为您服务", tk.ID)
+	ws.WSHub.SendToAdminsByTenant(tk.TenantID,
+		map[string]interface{}{"type": "ticket_update", "ticket": tk})
+	return nil
 }
 
 // ApproveTicket 审批转接申请（确认转接或取消转接）
@@ -275,7 +351,7 @@ func ApproveTicket(tk *model.Ticket, input ApproveTicketInput) (string, error) {
 		return agentResp.Content, nil
 	}
 	// 确认转接 → 人工接管
-	return TakeoverTicket(tk, input.WaitTime, input.TraceID)
+	return TakeoverTicket(tk, input.WaitTime, input.TraceID, 0, "system")
 }
 
 // SetTicketPriority 设置工单优先级（含操作日志、WebSocket 推送）
@@ -284,7 +360,9 @@ func SetTicketPriority(tk *model.Ticket, priority int, operator, remark string) 
 		return ErrInvalidParam
 	}
 	oldPriority := tk.Priority
-	config.DB.Model(&tk).Update("priority", priority)
+	if err := config.DB.Model(tk).Update("priority", priority).Error; err != nil {
+		return fmt.Errorf("更新优先级失败: %w", err)
+	}
 	tk.Priority = priority
 	_ = repository.AddTicketLog(tk.ID, tk.ThreadID, tk.TenantID, "priority",
 		tk.Status, tk.Status, oldPriority, priority, operator, remark)

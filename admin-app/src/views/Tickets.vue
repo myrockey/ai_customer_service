@@ -5,15 +5,45 @@
       <div class="card tk-list">
         <div class="tk-toolbar">
           <span class="text-3" style="font-size:12px;">状态</span>
-          <select v-model="status" class="select" style="width:120px;" @change="load">
+          <select v-model="status" class="select" style="width:100px;" @change="load">
             <option value="-1">全部</option>
             <option value="0">待处理</option>
             <option value="1">接管中</option>
             <option value="2">已取消</option>
             <option value="3">已关闭</option>
           </select>
-          <button class="btn btn-sm" @click="load">刷新列表</button>
+          <span class="text-3" style="font-size:12px;margin-left:10px;">优先级</span>
+          <select v-model="priority" class="select" style="width:96px;" @change="load">
+            <option value="-1">全部</option>
+            <option value="0">低</option>
+            <option value="1">中</option>
+            <option value="2">高</option>
+            <option value="3">紧急</option>
+          </select>
+          <span class="text-3" style="font-size:12px;margin-left:10px;">范围</span>
+          <select v-model="scope" class="select" style="width:100px;" @change="load">
+            <option value="all">全部</option>
+            <option value="mine">我的工单</option>
+          </select>
+          <input v-model="keyword" class="input" style="width:150px;height:26px;margin-left:10px;"
+                 placeholder="工单号/用户ID/接管人" @keyup.enter="load" @input="onKeywordInput" />
+          <button class="btn btn-sm" @click="load">查询</button>
+          <button class="btn btn-sm" @click="resetFilters">重置</button>
           <span class="text-3" style="font-size:12px;">共 {{ total }} 条</span>
+          <span style="flex:1;"></span>
+          <!-- 客服在线状态条 -->
+          <span class="text-3" style="font-size:12px;">在线客服:</span>
+          <span class="badge badge-green" style="margin-right:8px;">{{ onlineCount }}</span>
+          <template v-if="myAgent">
+            <span class="text-3" style="font-size:12px;">我的状态:</span>
+            <select v-model="myStatus" class="select" style="width:82px;" @change="setMyStatus">
+              <option :value="1">在线</option>
+              <option :value="2">忙碌</option>
+              <option :value="0">离线</option>
+            </select>
+            <span class="text-3" style="font-size:12px;margin-left:6px;">处理 {{ myAgent.handling_count }}/{{ myAgent.max_concurrent }}</span>
+          </template>
+          <span v-else-if="session.user_id" class="text-3" style="font-size:12px;color:#999;">（未接入在线状态）</span>
         </div>
         <div class="tk-items">
           <div v-if="!list.length" class="empty">暂无工单</div>
@@ -30,9 +60,12 @@
             <div class="tk-item-row text-2 mono" style="font-size:12px;">
               <span class="badge" :style="priorityStyle(t.priority)">{{ priorityText(t.priority) }}</span>
               用户: {{ t.user_id }}
+              <span v-if="t.handler_name" class="text-3" style="margin-left:6px;">接管: {{ t.handler_name }}</span>
             </div>
             <div class="tk-item-row text-2" style="font-size:12px;">{{ t.reason || '-' }}</div>
-            <div class="tk-item-row text-3" style="font-size:11px;">{{ fmtTime(t.created_at) }}</div>
+            <div class="tk-item-row text-3" style="font-size:11px;">{{ fmtTime(t.created_at) }}
+              <span v-if="t.handler_uid === session.user_id" class="badge badge-green" style="margin-left:6px;">我的</span>
+            </div>
           </div>
         </div>
       </div>
@@ -45,7 +78,9 @@
               <b class="mono">{{ current.ticket_no }}</b>
               <span class="badge" :class="statusClass(current.status)" style="margin-left:8px;">{{ statusText(current.status) }}</span>
             </div>
-            <div class="text-3" style="font-size:12px;">用户: <span class="mono">{{ current.user_id }}</span></div>
+            <div class="text-3" style="font-size:12px;">用户: <span class="mono">{{ current.user_id }}</span>
+              <span v-if="current.handler_name" style="margin-left:10px;">接管客服: <span class="mono">{{ current.handler_name }}</span></span>
+            </div>
           </div>
 
           <div class="msg-list" ref="msgBox">
@@ -59,25 +94,53 @@
 
           <div class="tk-actions">
             <template v-if="current.status === 0">
+              <template v-if="isPlat || isAdmin">
+                <span class="text-2" style="font-size:12px;margin-right:4px;">指派给:</span>
+                <select v-model="transferTo" class="select" style="width:auto;">
+                  <option :value="0">选择客服...</option>
+                  <option v-for="m in members" :key="m.id" :value="m.id">{{ m.nickname || m.username }}</option>
+                </select>
+                <button class="btn btn-sm btn-primary" :disabled="!transferTo" @click="transferTicket">指派</button>
+              </template>
               <button class="btn btn-primary btn-sm" @click="takeover">接管对话</button>
             </template>
             <template v-if="current.status === 1">
-              <textarea v-model="replyText" class="textarea" style="min-height:60px;" placeholder="回复用户消息..."></textarea>
-              <div style="display:flex;gap:8px;margin-top:8px;">
-                <button class="btn btn-primary btn-sm" :disabled="!replyText.trim()" @click="reply">发送回复</button>
-                <button class="btn btn-sm" @click="closeTicket">关闭工单</button>
-                <select v-model="newPriority" class="select" style="width:auto;margin-left:auto;" @change="setPriority">
-                  <option :value="0">低优先级</option>
-                  <option :value="1">中优先级</option>
-                  <option :value="2">高优先级</option>
-                  <option :value="3">紧急</option>
-                </select>
+              <div v-if="canHandle()">
+                <textarea v-model="replyText" class="textarea" style="min-height:60px;" placeholder="回复用户消息..."></textarea>
+                <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center;">
+                  <button class="btn btn-primary btn-sm" :disabled="!replyText.trim()" @click="reply">发送回复</button>
+                  <button class="btn btn-sm" @click="toggleQuickReplies">📋 话术</button>
+                  <button class="btn btn-sm" @click="closeTicket">关闭工单</button>
+                  <select v-model="transferTo" class="select" style="width:auto;">
+                    <option :value="0">转交给客服...</option>
+                    <option v-for="m in members" :key="m.id" :value="m.id">{{ m.nickname || m.username }}</option>
+                  </select>
+                  <button class="btn btn-sm" :disabled="!transferTo" @click="transferTicket">转交</button>
+                  <select v-model="newPriority" class="select" style="width:auto;margin-left:auto;" @change="setPriority">
+                    <option :value="0">低优先级</option>
+                    <option :value="1">中优先级</option>
+                    <option :value="2">高优先级</option>
+                    <option :value="3">紧急</option>
+                  </select>
+                </div>
+                <!-- 快捷话术面板 -->
+                <div v-if="showQuickReplies" class="card" style="margin-top:8px;padding:10px;max-height:260px;overflow-y:auto;">
+                  <div v-if="!quickReplies.length" class="text-2" style="font-size:12px;padding:6px 0;">暂无话术，可在「快捷回复」菜单中维护</div>
+                  <div v-for="qr in quickReplies" :key="qr.id" class="qr-item" style="padding:6px 8px;border-bottom:1px solid rgba(0,0,0,0.06);cursor:pointer;" @click="insertQuickReply(qr)">
+                    <span class="badge badge-blue" style="margin-right:6px;">{{ qr.category }}</span>
+                    <b style="font-size:12px;">{{ qr.title }}</b>
+                    <div class="text-2" style="font-size:11px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:520px;">{{ qr.content }}</div>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="text-2" style="font-size:13px;padding:8px 0;">
+                该工单由 <b>{{ current.handler_name || '-' }}</b> 接管中，仅接管人可回复/关闭。
               </div>
             </template>
             <template v-if="current.status === 3">
               <button class="btn btn-sm" @click="showLogs = true; loadLogs()" style="margin-left:auto;">查看操作日志</button>
             </template>
-            <button class="btn btn-sm" @click="showLogs = !showLogs" style="margin-left:auto;">{{ showLogs ? '隐藏日志' : '操作日志' }}</button>
+            <button class="btn btn-sm" @click="toggleLogs" style="margin-left:auto;">{{ showLogs ? '隐藏日志' : '操作日志' }}</button>
           </div>
 
           <div v-if="showLogs" class="logs">
@@ -94,10 +157,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
-import { api, toast } from '../api'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { api, toast, session } from '../api'
 
 const status = ref('-1')
+const priority = ref('-1')
+const keyword = ref('')
 const list = ref([])
 const total = ref(0)
 const current = ref(null)
@@ -117,18 +182,106 @@ const priorityStyle = p => ({ background: (PRIORITY[p] || [null, '#2563eb'])[1],
 const roleText = r => ({ user: '用户', ai: 'AI', human: '人工', system: '系统' }[r] || r)
 const roleClass = r => ({ user: 'role-user', ai: 'role-ai', human: 'role-human', system: 'role-sys' }[r] || '')
 
+// 接管权限：app_key 管理员 / 租户管理员（后端登录时判定 is_admin，前端不维护权限清单）/ 接管人本人 可回复、关闭、转交
+const isPlat = session.is_platform_admin
+const isAdmin = session.is_admin
+const members = ref([])
+const transferTo = ref(0)
+const quickReplies = ref([])
+const showQuickReplies = ref(false)
+
+// 在线状态：scope 分组 / 我的状态 / 在线客服数
+const scope = ref('all')
+const agentStatusList = ref([])
+const myStatus = ref(1)
+const myAgent = computed(() => agentStatusList.value.find(a => a.user_id === session.user_id) || null)
+const onlineCount = computed(() => agentStatusList.value.filter(a => a.status === 1).length)
+
+async function loadAgentStatus() {
+  try {
+    const r = await api('/api/admin/agent-status')
+    if (r.code === 0) {
+      agentStatusList.value = r.data || []
+      const me = agentStatusList.value.find(a => a.user_id === session.user_id)
+      if (me) myStatus.value = me.status
+    }
+  } catch (e) {}
+}
+
+async function setMyStatus() {
+  try {
+    const r = await api('/api/admin/agent-status', { method: 'PUT', body: { status: myStatus.value } })
+    if (r.code === 0) toast(myStatus.value === 1 ? '已切换在线' : myStatus.value === 2 ? '已切换忙碌' : '已切换离线', 'success')
+    await loadAgentStatus()
+  } catch (e) {}
+}
+
+// 话术面板：加载启用中的快捷回复
+async function toggleQuickReplies() {
+  showQuickReplies.value = !showQuickReplies.value
+  if (showQuickReplies.value && !quickReplies.value.length) {
+    try {
+      const r = await api('/api/admin/quick-replies', { params: { active: 1 } })
+      if (r.code === 0) quickReplies.value = r.data || []
+    } catch (e) {}
+  }
+}
+
+// 点击话术 → 插入输入框（可再编辑，不直接发送）
+function insertQuickReply(qr) {
+  replyText.value = (replyText.value ? replyText.value + '\n' : '') + qr.content
+  showQuickReplies.value = false
+}
+function canHandle() {
+  return !!(current.value && (isPlat || isAdmin || current.value.handler_uid === session.user_id))
+}
+async function loadMembers() {
+  try {
+    const r = await api('/api/admin/tickets/transfer-targets')
+    if (r.code === 0) members.value = r.data || []
+  } catch (e) {}
+}
+async function transferTicket() {
+  if (!transferTo.value) return toast('请选择目标客服', 'error')
+  const r = await api('/api/admin/tickets/' + current.value.id + '/transfer', {
+    method: 'POST', body: { to_user_id: transferTo.value }
+  })
+  if (r.code !== 0) return
+  toast('已转交')
+  transferTo.value = 0
+  await load()
+  await loadAgentStatus()
+}
+
 function fmtTime(t) {
   if (!t) return '-'
   return String(t).replace('T', ' ').slice(0, 19)
 }
 
+// 关键词清空时自动刷新列表
+function onKeywordInput() {
+  if (!keyword.value) load()
+}
+
 async function load() {
   try {
-    const r = await api('/api/admin/tickets', { params: { status: status.value, page: 1, size: 50 } })
-    if (r.code !== 0) return toast(r.msg || '加载工单失败', 'error')
+    const params = { status: status.value, page: 1, size: 50 }
+    if (scope.value === 'mine') params.scope = 'mine'
+    if (priority.value !== '-1') params.priority = priority.value
+    if (keyword.value.trim()) params.q = keyword.value.trim()
+    const r = await api('/api/admin/tickets', { params })
+    if (r.code !== 0) return
     list.value = r.data.list || []
     total.value = r.data.total || 0
   } catch (e) {}
+}
+
+function resetFilters() {
+  status.value = '-1'
+  priority.value = '-1'
+  keyword.value = ''
+  scope.value = 'all'
+  load()
 }
 
 async function fetchMessages(t) {
@@ -145,16 +298,23 @@ async function fetchMessages(t) {
 // 标记当前工单会话已读（未读数归零）
 async function markRead(t) {
   try {
-    await api('/api/admin/tickets/' + t.id + '/read', { method: 'POST', body: {} })
+    await api('/api/admin/tickets/' + t.id + '/read', { method: 'POST', body: {}, silent: true })
   } catch (e) {}
 }
 
 async function open(t) {
   current.value = t
   showLogs.value = false
+  logs.value = [] // 切换工单必须清空日志，否则残留上一工单的操作日志
   await fetchMessages(t)
   markRead(t)
   load() // 刷新列表未读数
+}
+
+// 操作日志开关：打开时重新加载当前工单日志（避免显示上一工单的旧数据）
+async function toggleLogs() {
+  showLogs.value = !showLogs.value
+  if (showLogs.value) await loadLogs()
 }
 
 // 接管/关闭/改优先级后，用最新列表数据刷新当前工单状态（否则详情区仍显示旧状态）
@@ -166,7 +326,7 @@ function refreshCurrent() {
 async function takeover() {
   try {
     const r = await api('/api/admin/tickets/' + current.value.id + '/takeover', { method: 'POST', body: { wait_time: 3 } })
-    if (r.code !== 0) return toast(r.msg || '接管失败', 'error')
+    if (r.code !== 0) return
     toast('已接管对话', 'success')
     await load()
     refreshCurrent()
@@ -179,7 +339,7 @@ async function reply() {
   if (!content) return
   try {
     const r = await api('/api/admin/tickets/' + current.value.id + '/reply', { method: 'POST', body: { content } })
-    if (r.code !== 0) return toast(r.msg || '回复失败', 'error')
+    if (r.code !== 0) return
     replyText.value = ''
     await open(current.value)
   } catch (e) {}
@@ -188,7 +348,7 @@ async function reply() {
 async function closeTicket() {
   try {
     const r = await api('/api/admin/tickets/' + current.value.id + '/close', { method: 'POST', body: {} })
-    if (r.code !== 0) return toast(r.msg || '关闭失败', 'error')
+    if (r.code !== 0) return
     toast('工单已关闭', 'success')
     await load()
     refreshCurrent()
@@ -201,7 +361,7 @@ async function setPriority() {
     const r = await api('/api/admin/tickets/' + current.value.id + '/priority', {
       method: 'POST', body: { priority: newPriority.value, remark: '前端修改优先级' }
     })
-    if (r.code !== 0) return toast(r.msg || '修改失败', 'error')
+    if (r.code !== 0) return
     toast('优先级已更新', 'success')
     await load()
     refreshCurrent()
@@ -231,6 +391,7 @@ function onWsMsg(e) {
     }
   } else if (msg.type === 'ticket_update' || msg.type === 'new_ticket') {
     load()
+    loadAgentStatus()
     if (hit) refreshCurrent()
   }
 }
@@ -238,6 +399,7 @@ function onWsMsg(e) {
 // ws 连接成功/重连后同步一次最新数据（替代旧的定时轮询）
 function onWsConnected() {
   load()
+  loadAgentStatus()
   if (current.value) {
     fetchMessages(current.value)
     markRead(current.value)
@@ -245,7 +407,9 @@ function onWsConnected() {
 }
 
 onMounted(() => {
+  loadMembers()
   load()
+  loadAgentStatus()
   window.addEventListener('cs-ws-msg', onWsMsg)
   window.addEventListener('cs-ws-connected', onWsConnected)
 })

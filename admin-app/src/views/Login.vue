@@ -19,6 +19,9 @@
         <button class="btn btn-primary btn-block" :disabled="loading" @click="doLogin">
           {{ loading ? '登录中...' : '登 录' }}
         </button>
+        <div class="login-switch">
+          <router-link to="/login-account" class="link">没有 AppKey？使用账号登录 →</router-link>
+        </div>
       </div>
       <div class="login-foot text-3">© 2026 智能客服系统 · 多租户 SaaS 版</div>
     </div>
@@ -38,7 +41,7 @@ const publicKeyPem = ref('')
 
 onMounted(async () => {
   try {
-    const r = await api('/api/auth/public-key')
+    const r = await api('/api/auth/public-key', { silent: true })
     if (r.code === 0 && r.data && r.data.public_key) {
       publicKeyPem.value = r.data.public_key
     }
@@ -72,10 +75,11 @@ async function doLogin() {
       }
     }
     const r = await api('/api/auth/token', { method: 'POST', body: payload })
-    if (r.code !== 0) return toast(r.msg || '登录失败', 'error')
+    if (r.code !== 0) return
     setSession(r.data)
     toast('登录成功，当前租户: ' + r.data.tenant_id, 'success')
-    router.push(r.data.is_platform_admin ? '/tenants' : '/tickets')
+    // 默认首页按角色分流：管理员（含密钥登录）→ 运营看板；客服 → 工单列表
+    router.push('/')
   } catch (e) {
     // api.js 已 toast
   } finally {
@@ -101,5 +105,8 @@ async function doLogin() {
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field-label { font-size: 12px; color: var(--c-text-2); }
 .login-tip { font-size: 11px; color: var(--c-text-3); line-height: 1.5; background: var(--c-bg); padding: 8px 10px; border-radius: 6px; }
+.login-switch { text-align: center; margin-top: 10px; font-size: 12px; }
+.login-switch .link { color: var(--c-primary, #3b82f6); text-decoration: none; }
+.login-switch .link:hover { text-decoration: underline; }
 .login-foot { margin-top: 22px; font-size: 11px; }
 </style>

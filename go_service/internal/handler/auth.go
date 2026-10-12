@@ -78,12 +78,116 @@ func IssueTokenHandler(c *gin.Context) {
 	}
 	auth.ClearLoginFails(limiterKey)
 	isPlat := false
+	tName := tid
 	if info, ok := auth.TenantInfo(tid); ok {
 		isPlat = info.IsPlatformAdmin
+		if info.Name != "" {
+			tName = info.Name
+		}
 	}
 	repository.WriteAuditLog(tid, b.AppKey, "login_ok", "auth", "app_key", "登录成功", ip)
 	c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
 		"token": tok, "tenant_id": tid, "expires_in": exp, "is_platform_admin": isPlat,
+		"is_admin": true, // app_key 管理员全权（uid=0），与 IsAdminUser/canHandleTicket 一致
+		"nickname": tid,  // app_key 无成员昵称，右上角用租户 ID 展示
+		"role_name": "管理员", // 右上角角色名称
+		"tenant_name": tName, // 右上角租户名称
+	}})
+}
+
+// ============ 子账号登录：POST /api/auth/user-token ============
+// 租户内成员（客服等）用 租户ID + 用户名 + 密码 登录，换取携带 uid 的访问令牌。
+// 安全：密码支持 RSA 加密传输（encrypted=true，与密钥登录一致）；同 IP+用户名防爆破。
+func UserTokenHandler(c *gin.Context) {
+	var b struct {
+		TenantID string `json:"tenant_id"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Encrypted bool  `json:"encrypted"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil || b.TenantID == "" || b.Username == "" || b.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "参数错误"})
+		return
+	}
+
+	ip := c.ClientIP()
+	limiterKey := ip + ":" + b.Username
+	if ok, wait := auth.CheckLoginAllowed(limiterKey); !ok {
+		c.JSON(http.StatusTooManyRequests, gin.H{"code": 429, "msg": "尝试过于频繁，请 " + wait.Round(time.Minute).String() + " 后再试"})
+		return
+	}
+
+	password := b.Password
+	if b.Encrypted {
+		key, err := crypto.GetRSAKey()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "RSA 密钥未就绪"})
+			return
+		}
+		plain, err := crypto.DecryptRSAOAEP(key, b.Password)
+		if err != nil {
+			auth.RecordLoginFail(limiterKey)
+			repository.WriteAuditLog(b.TenantID, b.Username, "login_fail", "auth", "user", "密码解密失败", ip)
+			c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "密码解密失败"})
+			return
+		}
+		password = plain
+	}
+
+	// 懒初始化租户内置角色（兼容存量租户）
+	if err := repository.EnsureTenantRoles(b.TenantID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "角色初始化失败"})
+		return
+	}
+	user, err := repository.GetUserByUsername(b.TenantID, b.Username)
+	if err != nil {
+		auth.RecordLoginFail(limiterKey)
+		repository.WriteAuditLog(b.TenantID, b.Username, "login_fail", "auth", "user", "用户名或密码错误", ip)
+		c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "用户名或密码错误"})
+		return
+	}
+	if user.Status != 1 {
+		auth.RecordLoginFail(limiterKey)
+		repository.WriteAuditLog(b.TenantID, b.Username, "login_fail", "auth", "user", "账号已禁用", ip, user.ID)
+		c.JSON(http.StatusForbidden, gin.H{"code": 403, "msg": "账号已禁用，请联系管理员"})
+		return
+	}
+	if user.PasswordHash != crypto.HashUserPassword(b.TenantID, b.Username, password) {
+		auth.RecordLoginFail(limiterKey)
+		repository.WriteAuditLog(b.TenantID, b.Username, "login_fail", "auth", "user", "用户名或密码错误", ip, user.ID)
+		c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "用户名或密码错误"})
+		return
+	}
+	auth.ClearLoginFails(limiterKey)
+	_ = repository.UpdateUserLastLogin(user.ID)
+
+	tok, exp, err := auth.IssueUserToken(b.TenantID, user.ID)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": err.Error()})
+		return
+	}
+	perms := repository.GetUserPerms(user.ID)
+	roles := repository.GetUserRoles(user.ID)
+	roleName, roleCode := "", ""
+	if len(roles) > 0 {
+		roleName, roleCode = roles[0].Name, roles[0].Code
+	}
+	repository.WriteAuditLog(b.TenantID, b.Username, "login_ok", "auth", "user", "账号登录成功", ip, user.ID)
+	nickname := user.Nickname
+	if nickname == "" {
+		nickname = user.Username
+	}
+	tName := b.TenantID
+	if info, ok := auth.TenantInfo(b.TenantID); ok && info.Name != "" {
+		tName = info.Name
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
+		"token": tok, "tenant_id": b.TenantID, "expires_in": exp,
+		"is_platform_admin": false, "user_id": user.ID,
+		"is_admin": repository.IsAdminUser(user.ID), // 管理员判定唯一来源（全权限），前端不维护权限清单
+		"nickname": nickname,
+		"role_name": roleName, "tenant_name": tName, // 右上角：角色名称 / 租户名称
+		"role": roleName, "role_code": roleCode, "permissions": perms, "roles": roles,
 	}})
 }
 
@@ -101,11 +205,18 @@ func RefreshTokenHandler(c *gin.Context) {
 		return
 	}
 	isPlat := false
+	tName := tid
 	if info, ok := auth.TenantInfo(tid); ok {
 		isPlat = info.IsPlatformAdmin
+		if info.Name != "" {
+			tName = info.Name
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
 		"token": newToken, "tenant_id": tid, "expires_in": exp, "is_platform_admin": isPlat,
+		"is_admin": true, "nickname": tid, // app_key 管理员全权
+		"role_name": "管理员", // 右上角角色名称
+		"tenant_name": tName, // 右上角租户名称
 	}})
 }
 
@@ -140,6 +251,7 @@ func ChangePasswordHandler(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "未获取到租户信息"})
 		return
 	}
+	// 修改的是当前登录管理员（平台管理员 t_admin 或租户管理员）自己的登录密钥
 
 	oldS, newS := b.OldSecret, b.NewSecret
 	if b.Encrypted {

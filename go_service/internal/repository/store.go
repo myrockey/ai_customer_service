@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"customer_service/internal/config"
@@ -47,7 +48,12 @@ func saveMessage(threadID, role, content string, ticketID *uint64) error {
 		TicketID: ticketID,
 		IsRead:   isRead,
 	}
-	return config.DB.Create(&m).Error
+	if err := config.DB.Create(&m).Error; err != nil {
+		return err
+	}
+	// 客户信息提取：用户消息命中正则（手机号/邮箱）时合并进 customer_profiles
+	ExtractAndSaveCustomerInfo(threadID, role, content)
+	return nil
 }
 
 // AssignLastUserMessage 将某会话最新一条用户消息归属到指定工单（转接诉求消息）
@@ -92,6 +98,21 @@ func ListTicketMessages(ticketID uint64) ([]model.Message, error) {
 func ListMessages(threadID string) ([]model.Message, error) {
 	var msgs []model.Message
 	err := config.DB.Where("thread_id = ?", threadID).Order("id ASC").Find(&msgs).Error
+	return msgs, err
+}
+
+// ListMessagesWithArchive 会话详情消息：messages 与 messages_archive 合并（后台完整回溯用）。
+// 消息归档后仍可在后台会话记录看到，Archived 标记区分来源。
+func ListMessagesWithArchive(threadID string) ([]model.MessageWithArchive, error) {
+	var msgs []model.MessageWithArchive
+	err := config.DB.Raw(`
+		SELECT id, thread_id, role, content, tenant_id, ticket_id, is_read, created_at, 0 AS archived
+		FROM messages WHERE thread_id = ?
+		UNION ALL
+		SELECT id, thread_id, role, content, tenant_id, ticket_id, is_read, created_at, 1 AS archived
+		FROM messages_archive WHERE thread_id = ?
+		ORDER BY created_at ASC, id ASC`, threadID, threadID).
+		Scan(&msgs).Error
 	return msgs, err
 }
 
@@ -186,15 +207,34 @@ func lastTakeoverTime(threadID string) time.Time {
 	return r.T
 }
 
+// TicketListOpt 工单列表附加筛选条件
+type TicketListOpt struct {
+	HandlerUID uint64 // >0 时仅看该客服的工单（scope=mine）
+	Keyword    string // 工单号 / 用户ID / 接管人 模糊匹配
+	Priority   int    // >=0 时按优先级筛选
+}
+
 // ListTickets 工单列表（status=-1 表示全部；tenantID 非空时按 tenant_id 精确过滤；
 // 平台管理员传空字符串查看全部租户）
-func ListTickets(tenantID string, status, page, size int) ([]model.Ticket, int64, error) {
+func ListTickets(tenantID string, status, page, size int, opts ...TicketListOpt) ([]model.Ticket, int64, error) {
 	q := config.DB.Model(&model.Ticket{})
 	if tenantID != "" {
 		q = q.Where("tenant_id = ?", tenantID)
 	}
 	if status >= 0 {
 		q = q.Where("status = ?", status)
+	}
+	if len(opts) > 0 {
+		if opts[0].HandlerUID > 0 {
+			q = q.Where("handler_uid = ?", opts[0].HandlerUID)
+		}
+		if kw := strings.TrimSpace(opts[0].Keyword); kw != "" {
+			q = q.Where("(ticket_no LIKE ? OR user_id LIKE ? OR handler_name LIKE ?)",
+				"%"+kw+"%", "%"+kw+"%", "%"+kw+"%")
+		}
+		if opts[0].Priority >= 0 {
+			q = q.Where("priority = ?", opts[0].Priority)
+		}
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {

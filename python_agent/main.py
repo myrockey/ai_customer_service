@@ -45,7 +45,7 @@ from langgraph.types import interrupt, Command
 from contextvars import ContextVar
 
 # P2-5：拆分模块导入
-from db_ops import (tenant_from_thread, collection_name, verify_agent_tables, touch_session,
+from db_ops import (tenant_from_thread, collection_name, verify_agent_tables, touch_session_retry,
                     record_token_usage, check_concurrent_sessions, load_active_prompt,
                     seed_default_prompt, cleanup_sessions, session_cleanup_loop)
 from agent_factory import current_model_name, current_model_source, current_chat_prices, get_tenant_agent, get_platform_model, get_platform_embeddings
@@ -54,6 +54,7 @@ from agent_factory import current_model_name, current_model_source, current_chat
 trace_id_var: ContextVar[str] = ContextVar("trace_id", default="-")
 # 协程上下文：当前请求所属租户（多租户隔离）
 tenant_var: ContextVar[str] = ContextVar("tenant_id", default="")
+thread_var: ContextVar[str] = ContextVar("thread_id", default="")
 # 协程上下文：线程存在待处理工单（未接管）——agent 不再重复触发转人工中断，正常回答
 pending_ticket_var: ContextVar[bool] = ContextVar("pending_ticket", default=False)
 
@@ -130,14 +131,19 @@ async def lifespan(app: FastAPI):
     logger.info("==== Agent Service starting ====")
     try:
         # 1. 初始化异步Postgres连接池（业务查询并发安全）+ AsyncPostgresSaver（会话checkpoint独立连接）
+        #    check=check_connection：借出前 ping 验证，PG 重启残留的死连接即时丢弃重建（避免借出后执行才报错）
         app.state.db_pool = AsyncConnectionPool(
             POSTGRES_DSN, min_size=2, max_size=10, open=True,
             kwargs={"autocommit": True},
+            check=AsyncConnectionPool.check_connection,
         )
         app.state.checkpointer_conn = await psycopg.AsyncConnection.connect(POSTGRES_DSN, autocommit=True)
-        # 并发安全包装：AsyncPostgresSaver 单连接不支持并发 aput，多租户并发聊天会
-        # 触发 "another command is already in progress"（warning/偶发接口报错），加锁串行化
-        app.state.checkpointer = SafeAsyncPostgresSaver(app.state.checkpointer_conn)
+        # 并发安全 + 断线自动重连包装：
+        # 1) AsyncPostgresSaver 单连接不支持并发 aput，多租户并发聊天会触发
+        #    "another command is already in progress"（warning/偶发接口报错），加锁串行化；
+        # 2) PostgreSQL 重启/断连后常驻连接会 closed，必须自动重建，否则所有聊天恢复历史时
+        #    抛 "the connection is closed" 直到 agent 重启（SafeAsyncPostgresSaver 内部按需重连）。
+        app.state.checkpointer = SafeAsyncPostgresSaver(app.state.checkpointer_conn, dsn=POSTGRES_DSN)
         await app.state.checkpointer.setup()
         logger.info("✅ AsyncPostgresSaver checkpointer setup done (concurrency-safe wrapper)")
 
@@ -189,6 +195,11 @@ async def lifespan(app: FastAPI):
         logger.info("✅ session cleanup task started (retention=%dd, interval=%ds)",
                     SESSION_RETENTION_DAYS, SESSION_CLEANUP_INTERVAL)
 
+        # 6.1 会话自动摘要后台任务（🚀②）
+        import session_summary
+        app.state.summary_task = asyncio.create_task(session_summary.session_summary_loop(app))
+        logger.info("✅ session summary task started")
+
         # 7. Redis：缓存失效广播订阅（多实例下模型切换全量即时生效）——强制依赖，失败即启动失败
         import redis_pubsub
         app.state.redis_client = redis_pubsub.make_redis_client()
@@ -237,6 +248,13 @@ async def lifespan(app: FastAPI):
             await t
         except asyncio.CancelledError:
             pass
+    # 停止会话摘要后台任务
+    if getattr(app.state, "summary_task", None) is not None:
+        app.state.summary_task.cancel()
+        try:
+            await app.state.summary_task
+        except asyncio.CancelledError:
+            pass
     if getattr(app.state, "redis_client", None) is not None:
         await app.state.redis_client.aclose()
     if app.state.http_client is not None:
@@ -269,8 +287,8 @@ app.include_router(cache_router)
 
 
 
-# P4-3：注入 tools 模块的全局依赖（app/logger/tenant_var/pending_ticket_var）
-tools.set_app(app, logger, tenant_var, pending_ticket_var)
+# P4-3：注入 tools 模块的全局依赖（app/logger/tenant_var/pending_ticket_var/thread_var）
+tools.set_app(app, logger, tenant_var, pending_ticket_var, thread_var)
 
 
 # ====================== Pydantic Schema（已拆分到 models.py） ======================
@@ -305,13 +323,14 @@ async def agent_chat(req: ChatRequest, request: Request):
 
     tenant_id = tenant_from_thread(thread_id)
     tenant_var.set(tenant_id)
+    thread_var.set(thread_id)
     pending_ticket_var.set(req.has_pending_ticket)
     agent = await get_tenant_agent(request.app, tenant_id)
 
     config = {"configurable": {"thread_id": thread_id}}
     try:
         async with _pool_conn(request.app) as conn:
-            await touch_session(conn, thread_id)
+            await touch_session_retry(request.app, thread_id)
         result = await agent.ainvoke(
             {"messages": [HumanMessage(content=user_message)]},
             config=config
@@ -368,6 +387,7 @@ async def agent_chat_stream(req: ChatRequest, request: Request):
 
         tenant_id = tenant_from_thread(thread_id)
         tenant_var.set(tenant_id)
+        thread_var.set(thread_id)
         pending_ticket_var.set(req.has_pending_ticket)
 
         # P1-2：并发活跃会话配额校验
@@ -381,7 +401,7 @@ async def agent_chat_stream(req: ChatRequest, request: Request):
             agent = await get_tenant_agent(request.app, tenant_id)
             config = {"configurable": {"thread_id": thread_id}}
             async with _pool_conn(request.app) as conn:
-                await touch_session(conn, thread_id)
+                await touch_session_retry(request.app, thread_id)
 
             full_content = ""
             is_interrupt = False
@@ -433,6 +453,7 @@ async def agent_resume(req: ResumeRequest, request: Request):
     thread_id = req.thread_id.strip()
     tenant_id = tenant_from_thread(thread_id)
     tenant_var.set(tenant_id)
+    thread_var.set(thread_id)
 
     # P1-2：并发活跃会话配额校验
     async with _pool_conn(request.app) as conn:
@@ -445,7 +466,7 @@ async def agent_resume(req: ResumeRequest, request: Request):
     config = {"configurable": {"thread_id": thread_id}}
     try:
         async with _pool_conn(request.app) as conn:
-            await touch_session(conn, thread_id)
+            await touch_session_retry(request.app, thread_id)
         result = await agent.ainvoke(
             Command(resume={
                 "confirmed": req.confirmed,

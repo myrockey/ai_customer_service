@@ -70,4 +70,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240102182953-50ed04b92917 // indirect
 	google.golang.org/grpc v1.61.1 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
+	gorm.io/plugin/soft_delete v1.2.1 // indirect
 )

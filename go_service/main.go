@@ -35,6 +35,11 @@ func main() {
 	if err := config.InitDB(); err != nil {
 		logger.Fatal("数据库初始化失败", logger.Fields{"error": err.Error()})
 	}
+	// 幂等种入内置菜单（菜单=权限载体）；缺失时仅告警，不阻塞启动
+	if err := repository.SeedBuiltinMenus(); err != nil {
+		logger.Warn("内置菜单种子初始化失败", logger.Fields{"error": err.Error()})
+	}
+	repository.CheckMenuPermsConsistency()
 	auth.InitAuth(config.GlobalConfig.Auth.Enabled, config.GlobalConfig.Auth.TokenTTL, config.GlobalConfig.Auth.Tenants)
 
 	// 初始化 RSA 密钥对（登录 app_secret 传输加密；首次启动自动生成并持久化）

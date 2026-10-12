@@ -247,12 +247,24 @@ func HandleAdminWS() gin.HandlerFunc {
 		if err != nil {
 			return
 		}
-		cl := ws.WSHub.RegisterAdmin(conn, middleware.TenantOf(c))
-		defer ws.WSHub.UnregisterAdmin(cl)
+		tid := middleware.TenantOf(c)
+		uid := middleware.UserIDOf(c)
+		// 子账号客服上线：置在线（app_key 管理员 uid=0 不进在线池，不参与自动分配）
+		if uid > 0 {
+			_ = repository.UpsertAgentStatus(tid, uid, 1)
+		}
+		cl := ws.WSHub.RegisterAdmin(conn, tid)
+		defer func() {
+			ws.WSHub.UnregisterAdmin(cl)
+			if uid > 0 {
+				_ = repository.UpsertAgentStatus(tid, uid, 0)
+			}
+		}()
 		go cl.WriteLoop()
 
-		// 管理端只接收服务端推送，忽略客户端消息
+		// 管理端只接收心跳/忽略客户端消息；60s 无任何消息判定离线（前端每 25s ping 保活）
 		for {
+			_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 			if _, _, err := conn.ReadMessage(); err != nil {
 				return
 			}

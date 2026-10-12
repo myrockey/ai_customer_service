@@ -9,13 +9,19 @@ import (
 )
 
 // WriteAuditLog P1-3：写一条管理端操作审计日志（best-effort，失败仅记日志不影响主流程）
-func WriteAuditLog(tenantID, operator, action, objectType, objectID, detail, ip string) {
+// userIDs 为可选可变参数：传子账号 user_id 用于区分同名历史操作；不传默认 0（app_key 管理员）
+func WriteAuditLog(tenantID, operator, action, objectType, objectID, detail, ip string, userIDs ...uint64) {
 	if tenantID == "" {
 		tenantID = "system"
+	}
+	var uid uint64
+	if len(userIDs) > 0 {
+		uid = userIDs[0]
 	}
 	log := model.AuditLog{
 		TenantID:   tenantID,
 		Operator:   operator,
+		UserID:     uid,
 		Action:     action,
 		ObjectType: objectType,
 		ObjectID:   objectID,

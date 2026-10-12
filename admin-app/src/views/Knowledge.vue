@@ -7,6 +7,11 @@
           <option v-for="c in categories" :key="c.category" :value="c.category">{{ c.category }} ({{ c.count }})</option>
         </select>
         <input v-model="keyword" class="input" style="width:180px;" placeholder="搜索文档名/内容" @keyup.enter="load()" />
+        <select v-model="sortBy" class="select" style="width:130px;" @change="load()">
+          <option value="created_desc">最新上传</option>
+          <option value="hit_desc">命中最多</option>
+          <option value="hit_asc">从未命中</option>
+        </select>
         <button class="btn btn-sm" @click="load()">搜索</button>
         <button class="btn btn-sm" @click="reset">重置</button>
       </div>
@@ -41,6 +46,8 @@
         <template #cell-meta="{ row }">
           <span class="text-2 mono" style="font-size:12px;">
             分类: {{ row.category || '默认' }} · 分片: {{ row.chunk_count ?? '-' }} · {{ fileSize(row.file_size) }}
+            <span class="hit-tag" :class="{ 'hit-zero': !row.hit_count }">命中 {{ row.hit_count || 0 }} 次</span>
+            <span v-if="row.last_hit_at" class="text-2" style="font-size:12px;">· 最近 {{ fmt(row.last_hit_at) }}</span>
           </span>
           <div v-if="row.status === 2 && row.error_msg" class="err-msg" :title="row.error_msg">{{ row.error_msg.slice(0, 50) }}</div>
         </template>
@@ -151,6 +158,7 @@ const selected = ref([])
 const categories = ref([])
 const category = ref('')
 const keyword = ref('')
+const sortBy = ref('created_desc')
 const showUpload = ref(false)
 const uploading = ref(false)
 const upDone = ref(0)
@@ -207,13 +215,13 @@ async function fetchAllDocs() {
   if (category.value) params.category = category.value
   if (keyword.value.trim()) params.keyword = keyword.value.trim()
   const all = []
-  const r = await api('/api/admin/kb/documents', { params })
+  const r = await api('/api/admin/kb/documents', { params, silent: true })
   if (r.code !== 0) return all
   all.push(...((r.data && r.data.list) || []))
   const totalN = (r.data && r.data.total) || 0
   const pages = Math.ceil(totalN / 100)
   for (let p = 2; p <= pages; p++) {
-    const rp = await api('/api/admin/kb/documents', { params: { ...params, page: p, page_size: 100 } })
+    const rp = await api('/api/admin/kb/documents', { params: { ...params, page: p, page_size: 100 }, silent: true })
     if (rp.code === 0) all.push(...((rp.data && rp.data.list) || []))
   }
   return all
@@ -241,7 +249,7 @@ async function startIndex() {
   const body = selected.value.length ? { doc_ids: selected.value } : {}
   try {
     const r = await api('/api/admin/kb/index', { method: 'POST', body })
-    if (r.code !== 0) return toast(r.msg || '提交失败', 'error')
+    if (r.code !== 0) return
     toast(r.msg || '已提交索引入队', 'success')
     showIndexProgress.value = true
     progressActive.value = true
@@ -249,7 +257,7 @@ async function startIndex() {
     clearInterval(progressTimer)
     progressTimer = setInterval(refreshProgress, 2000)
     load()
-  } catch (e) { toast('提交失败', 'error') }
+  } catch (e) { }
 }
 
 function closeProgress(completed = false) {
@@ -313,7 +321,7 @@ async function saveSetting() {
 async function load(pg) {
   page.value = pg || 1
   try {
-    const params = { page: page.value, page_size: size.value }
+    const params = { page: page.value, page_size: size.value, order: sortBy.value }
     if (category.value) params.category = category.value
     if (keyword.value.trim()) params.keyword = keyword.value.trim()
     const r = await api('/api/admin/kb/documents', { params })
@@ -326,7 +334,7 @@ async function load(pg) {
   } catch (e) {}
 }
 function onPage({ page: p, size: s }) { size.value = s; load(p) }
-function reset() { category.value = ''; keyword.value = ''; load(1) }
+function reset() { category.value = ''; keyword.value = ''; sortBy.value = 'created_desc'; load(1) }
 
 async function setCategory(row) {
   catMode.value = 'single'
@@ -358,7 +366,7 @@ async function reindex(row) {
   if (!confirm('确认重索引文档「' + row.title + '」？（会重新分片并更新向量）')) return
   try {
     const r = await api('/api/admin/kb/index', { method: 'POST', body: { doc_ids: [row.doc_id] } })
-    if (r.code !== 0) return toast(r.msg || '提交失败', 'error')
+    if (r.code !== 0) return
     toast(r.msg || '已提交重索引', 'success')
     showIndexProgress.value = true
     progressActive.value = true
@@ -366,7 +374,7 @@ async function reindex(row) {
     clearInterval(progressTimer)
     progressTimer = setInterval(refreshProgress, 2000)
     load()
-  } catch (e) { toast('提交失败', 'error') }
+  } catch (e) { }
 }
 
 async function remove(row) {
@@ -416,7 +424,7 @@ async function batchRun(action, extra = {}) {
     toast(r.msg || '操作完成', r.code === 0 ? 'success' : 'error')
     clearSelected()
     load()
-  } catch (e) { toast('批量操作失败', 'error') }
+  } catch (e) { }
 }
 function batchCategory() {
   catMode.value = 'batch'
@@ -485,7 +493,6 @@ async function uploadFile() {
     load()
   } catch (e) {
     console.error('[kb upload] failed', e)
-    toast((e && e.msg) || '上传失败', 'error')
   } finally { uploading.value = false }
 }
 </script>
@@ -499,4 +506,6 @@ async function uploadFile() {
 .f-label { font-size: 12px; color: var(--c-text-2); }
 .up-tabs { display: flex; gap: 8px; }
 .err-msg { font-size: 11px; color: #e5484d; margin-top: 2px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hit-tag { display: inline-block; margin-left: 8px; padding: 1px 6px; border-radius: 4px; font-size: 11px; background: rgba(37, 99, 235, .12); color: #2563eb; }
+.hit-zero { background: rgba(139, 148, 158, .14); color: #8f959e; }
 </style>

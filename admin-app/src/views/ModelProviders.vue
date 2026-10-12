@@ -123,7 +123,7 @@ async function save() {
     const r = editing.value
       ? await api('/api/admin/model-providers/' + editing.value.id, { method: 'PUT', body })
       : await api('/api/admin/model-providers', { method: 'POST', body: { provider_key: form.provider_key, ...body } })
-    if (r.code !== 0) return toast(r.msg || '保存失败', 'error')
+    if (r.code !== 0) return
     toast(r.msg || '保存成功', 'success')
     showModal.value = false
     load()

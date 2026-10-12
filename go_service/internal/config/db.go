@@ -139,7 +139,9 @@ func InitDB() error {
 	// 模型已含 tenant_id、租户配额、provider_id 等全部列与索引，AutoMigrate 幂等建全。
 	if err := DB.AutoMigrate(&model.Message{}, &model.Ticket{}, &model.TenantRow{},
 		&model.AuditLog{}, &model.PlatformConfig{}, &model.ModelProvider{},
-		&model.ArchivedMessage{}, &model.TicketLog{}, &model.Order{}); err != nil {
+		&model.ArchivedMessage{}, &model.TicketLog{}, &model.Order{},
+		&model.CustomerProfile{}, &model.User{}, &model.Role{}, &model.UserRole{},
+		&model.QuickReply{}, &model.AgentStatus{}, &model.SatisfactionRating{}); err != nil {
 		return fmt.Errorf("auto migrate err: %w", err)
 	}
 	// 种子租户：tenants 表为空时从 config.yaml 写入（app_secret 哈希，支持 env 覆盖）

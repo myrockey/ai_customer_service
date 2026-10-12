@@ -275,7 +275,7 @@ async function save() {
     }
     body.embedding_config.embedding_price = Number(emb.emb_price) || 0
     const r = await api(cfgURL.value, { method: 'PUT', body })
-    if (r.code !== 0) return toast(r.msg || '保存失败', 'error')
+    if (r.code !== 0) return
     toast(r.msg || '保存成功，Agent 已重建', 'success')
     load()
   } catch (e) {

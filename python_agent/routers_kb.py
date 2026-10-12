@@ -212,29 +212,42 @@ async def kb_upload(request: Request, title: str = Form(None), content: str = Fo
 
 @router.get("/agent/kb/documents")
 async def kb_documents(request: Request, category: str = None, keyword: str = None,
-                       page: int = 1, page_size: int = 10):
+                       order: str = "created_desc", page: int = 1, page_size: int = 10):
     tenant_id = tenant_from_request(request)
     keyword = (keyword or "").strip()
     page = max(1, page)
     page_size = min(max(1, page_size), 100)
+    # KB 闭环：排序（created_desc 最新 / hit_desc 命中最多 / hit_asc 从未命中优先）
+    order_by = {
+        "created_desc": "d.created_at DESC, d.id DESC",
+        "hit_desc": "h.hit_count DESC NULLS LAST, d.created_at DESC",
+        "hit_asc": "h.hit_count ASC NULLS FIRST, d.created_at DESC",
+    }.get(order, "d.created_at DESC, d.id DESC")
     async with _pool_conn(request.app) as conn:
         async with conn.cursor() as cur:
-            where_sql = " WHERE tenant_id = %s"
+            where_sql = " WHERE d.tenant_id = %s"
             conds = [tenant_id]
             if category:
-                where_sql += " AND category = %s"
+                where_sql += " AND d.category = %s"
                 conds.append(category)
             if keyword:
                 # content 列已废弃（文件为唯一数据源），仅按标题/文件名搜索
-                where_sql += " AND (title ILIKE %s OR file_name ILIKE %s)"
+                where_sql += " AND (d.title ILIKE %s OR d.file_name ILIKE %s)"
                 conds.extend([f"%{keyword}%", f"%{keyword}%"])
             # 总数
-            await cur.execute("SELECT count(*) FROM kb_documents" + where_sql, tuple(conds))
+            await cur.execute("SELECT count(*) FROM kb_documents d" + where_sql, tuple(conds))
             (total,) = await cur.fetchone()
             # 分页数据：列表不拉取 content 大字段（预览/下载时按 doc_id 单独查），避免大字段随列表传输
-            base_sql = ("SELECT doc_id, title, chunk_count, created_at, file_name, file_size, category, status, error_msg, updated_at, file_url "
-                        "FROM kb_documents" + where_sql + " ORDER BY created_at DESC LIMIT %s OFFSET %s")
-            await cur.execute(base_sql, tuple(conds) + (page_size, (page - 1) * page_size))
+            # KB 闭环：带命中统计（hit_count 被命中次数、last_hit_at 最近命中时间）
+            base_sql = (
+                "SELECT d.doc_id, d.title, d.chunk_count, d.created_at, d.file_name, d.file_size, d.category, "
+                "       d.status, d.error_msg, d.updated_at, d.file_url, "
+                "       COALESCE(h.hit_count, 0), h.last_hit_at "
+                "FROM kb_documents d "
+                "LEFT JOIN (SELECT doc_id, COUNT(*) AS hit_count, MAX(hit_at) AS last_hit_at "
+                "           FROM kb_hits WHERE tenant_id = %s GROUP BY doc_id) h "
+                "  ON h.doc_id = d.doc_id" + where_sql + " ORDER BY " + order_by + " LIMIT %s OFFSET %s")
+            await cur.execute(base_sql, tuple([tenant_id] + conds) + (page_size, (page - 1) * page_size))
             rows = await cur.fetchall()
     return {"code": 0, "data": {
         "list": [
@@ -243,7 +256,9 @@ async def kb_documents(request: Request, category: str = None, keyword: str = No
              "file_name": r[4], "file_size": r[5] or 0, "category": r[6] or "默认",
              "status": r[7] if r[7] is not None else 0, "error_msg": r[8],
              "updated_at": r[9].isoformat() if r[9] else None,
-             "file_url": r[10] or kb_file_url(tenant_id, r[0], r[4])}
+             "file_url": r[10] or kb_file_url(tenant_id, r[0], r[4]),
+             "hit_count": r[11] or 0,
+             "last_hit_at": r[12].isoformat() if r[12] else None}
             for r in rows
         ],
         "total": total, "page": page, "page_size": page_size,

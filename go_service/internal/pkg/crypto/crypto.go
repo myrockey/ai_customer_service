@@ -100,3 +100,10 @@ func HashSecret(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(sum[:])
 }
+
+// HashUserPassword 成员账号密码哈希（带租户+用户名盐，sha256 hex）
+// 盐设计：tenant_id|username 防跨租户彩虹表；与 app_secret 哈希相互独立
+func HashUserPassword(tenantID, username, password string) string {
+	sum := sha256.Sum256([]byte(tenantID + "|" + username + "|" + password))
+	return hex.EncodeToString(sum[:])
+}
