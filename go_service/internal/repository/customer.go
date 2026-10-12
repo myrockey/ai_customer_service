@@ -20,6 +20,8 @@ import (
 //   - phone：中国大陆手机号（容忍空格/短横线/86 前缀）
 //   - email：通用邮箱
 var defaultExtractRules = []model.ExtractRule{
+	// phone：中国大陆手机号（容忍空格/短横线/86 前缀）。
+	// 注意：Go regexp(RE2) 不支持 lookbehind/lookahead，数字边界在 extractFromContent 里代码校验
 	{Field: "phone", Pattern: `(?:\+?86[\s-]?)?1[3-9]\d[\s-]?\d{4}[\s-]?\d{4}`},
 	{Field: "email", Pattern: `[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`},
 }
@@ -104,6 +106,15 @@ func extractFromContent(content string) map[string]string {
 			continue
 		}
 		if r.Field == "phone" {
+			// RE2 不支持 lookbehind/lookahead：手动校验数字边界，
+			// 防止从长数字串（文件 URL 的 unixNano 时间戳、订单号等）中截取 11 位误匹配
+			if idx := re.FindStringIndex(content); idx != nil {
+				prevDigit := idx[0] > 0 && content[idx[0]-1] >= '0' && content[idx[0]-1] <= '9'
+				nextDigit := idx[1] < len(content) && content[idx[1]] >= '0' && content[idx[1]] <= '9'
+				if prevDigit || nextDigit {
+					continue
+				}
+			}
 			m = cleanPhone(m)
 		}
 		if m != "" {

@@ -56,8 +56,11 @@ func saveMessage(threadID, role, content, msgType string, ticketID *uint64) erro
 	if err := config.DB.Create(&m).Error; err != nil {
 		return err
 	}
-	// 客户信息提取：用户消息命中正则（手机号/邮箱）时合并进 customer_profiles
-	ExtractAndSaveCustomerInfo(threadID, role, content)
+	// 客户信息提取：仅对文本消息提取（图片/视频消息 content 是文件 URL，含 unixNano 时间戳数字，
+	// 会误命中手机号正则），命中（手机号/邮箱）时合并进 customer_profiles
+	if msgType == "text" {
+		ExtractAndSaveCustomerInfo(threadID, role, content)
+	}
 	return nil
 }
 
