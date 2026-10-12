@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="tickets">
     <div class="tk-layout">
       <!-- 工单列表 -->
@@ -86,7 +86,11 @@
           <div class="msg-list" ref="msgBox">
             <div v-for="(m, i) in messages" :key="i" class="msg" :class="'msg-' + m.role">
               <span class="msg-role" :class="roleClass(m.role)">{{ roleText(m.role) }}</span>
-              <div class="msg-content">{{ m.content }}</div>
+              <div class="msg-content">
+                <img v-if="m.msg_type === 'image'" :src="m.content" class="msg-img" @click="previewImg(m.content)" />
+                <video v-else-if="m.msg_type === 'video'" :src="m.content" class="msg-video" controls preload="metadata"></video>
+                <template v-else>{{ m.content }}</template>
+              </div>
               <div class="msg-time text-3">{{ fmtTime(m.created_at) }}</div>
             </div>
             <div v-if="!messages.length" class="empty">暂无消息</div>
@@ -105,10 +109,21 @@
               <button class="btn btn-primary btn-sm" v-perm="'ticket:handle'" @click="takeover">接管对话</button>
             </template>
             <template v-if="current.status === 1">
-              <div v-if="canHandle()">
-                <textarea v-model="replyText" class="textarea" style="min-height:60px;" placeholder="回复用户消息..."></textarea>
+              <div v-if="canHandle()" style="position:relative;" @dragover.prevent="onDragOver" @dragleave="onDragLeave" @drop.prevent="onDrop">
+                <div v-if="dragTip" class="drop-tip">松开鼠标，发送图片/视频</div>
+                <textarea v-model="replyText" class="textarea" style="min-height:60px;" placeholder="回复用户消息...（支持拖拽图片/视频）" @keydown.ctrl.enter="reply"></textarea>
                 <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center;">
                   <button class="btn btn-primary btn-sm" :disabled="!replyText.trim()" v-perm="'ticket:handle'" @click="reply">发送回复</button>
+                  <label class="btn btn-sm" style="cursor:pointer;position:relative;overflow:hidden;" v-perm="'ticket:handle'">
+                    <span v-if="uploading">上传中...</span>
+                    <span v-else>🖼 图片</span>
+                    <input type="file" accept="image/*" style="position:absolute;left:0;top:0;width:100%;height:100%;opacity:0;cursor:pointer;" @change="uploadMedia($event, 'image')" />
+                  </label>
+                  <label class="btn btn-sm" style="cursor:pointer;position:relative;overflow:hidden;" v-perm="'ticket:handle'">
+                    <span v-if="uploadingVideo">上传中...</span>
+                    <span v-else>🎬 视频</span>
+                    <input type="file" accept="video/*" style="position:absolute;left:0;top:0;width:100%;height:100%;opacity:0;cursor:pointer;" @change="uploadMedia($event, 'video')" />
+                  </label>
                   <button class="btn btn-sm" @click="toggleQuickReplies">📋 话术</button>
                   <button class="btn btn-sm" v-perm="'ticket:handle'" @click="closeTicket">关闭工单</button>
                   <select v-model="transferTo" class="select" style="width:auto;">
@@ -153,6 +168,11 @@
         <div v-else class="empty" style="margin-top:40vh;">选择左侧工单查看会话</div>
       </div>
     </div>
+
+    <!-- 图片预览 -->
+    <div v-if="previewImgUrl" class="img-preview-mask" @click="previewImgUrl = ''">
+      <img :src="previewImgUrl" class="img-preview" @click.stop />
+    </div>
   </div>
 </template>
 
@@ -172,6 +192,8 @@ const replyText = ref('')
 const newPriority = ref(1)
 const showLogs = ref(false)
 const msgBox = ref(null)
+const uploading = ref(false)
+const previewImgUrl = ref('')
 
 const STATUS = { 0: ['待处理', 'badge-orange'], 1: ['接管中', 'badge-blue'], 2: ['已取消', 'badge-gray'], 3: ['已关闭', 'badge-green'] }
 const PRIORITY = { 0: ['低', '#8c8c8c'], 1: ['中', '#2563eb'], 2: ['高', '#d97706'], 3: ['紧急', '#e5484d'] }
@@ -345,6 +367,59 @@ async function reply() {
   } catch (e) {}
 }
 
+// 发送图片/视频消息：上传成功后立即作为 image/video 消息发送（不进入文本输入框）
+const uploadingVideo = ref(false)
+const dragTip = ref(false)
+// 按 MIME 优先、扩展名兜底判定文件类型（拖拽文件的 type 常为空字符串）
+function kindOf(f) {
+  const t = (f.type || '').toLowerCase()
+  if (/^image\//.test(t) || /\.(jpe?g|png|gif|webp)$/i.test(f.name || '')) return 'image'
+  if (/^video\//.test(t) || /\.(mp4|webm)$/i.test(f.name || '')) return 'video'
+  return ''
+}
+async function uploadMedia(e, kind, file) {
+  let f = file
+  if (e && e.target && e.target.files) { f = e.target.files[0]; e.target.value = '' }
+  if (!f) return
+  if (kind === 'image') {
+    if (!/\.(jpe?g|png|gif|webp)$/i.test(f.name || '')) return toast('仅支持 jpg/png/gif/webp 图片', 'error')
+    if (f.size > 5 * 1024 * 1024) return toast('图片不能超过 5MB', 'error')
+  } else {
+    if (!/\.(mp4|webm)$/i.test(f.name || '')) return toast('仅支持 mp4/webm 视频', 'error')
+    if (f.size > 50 * 1024 * 1024) return toast('视频不能超过 50MB', 'error')
+  }
+  const fd = new FormData()
+  fd.append('file', f)
+  uploading.value = kind === 'image'
+  uploadingVideo.value = kind === 'video'
+  try {
+    const r = await api('/api/admin/sessions/upload', { method: 'POST', form: fd })
+    if (r.code !== 0) return
+    const mt = r.data.msg_type || kind
+    const rr = await api('/api/admin/tickets/' + current.value.id + '/reply', { method: 'POST', body: { content: r.data.url, msg_type: mt } })
+    if (rr.code !== 0) return
+    await open(current.value)
+  } catch (err) {
+    console.error('[uploadMedia]', err)
+  } finally {
+    uploading.value = false
+    uploadingVideo.value = false
+  }
+}
+function onDragOver() { dragTip.value = true }
+function onDragLeave() { dragTip.value = false }
+function onDrop(e) {
+  dragTip.value = false
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]
+  if (!f) return
+  const kind = kindOf(f)
+  if (!kind) return toast('仅支持图片(jpg/png/gif/webp)或视频(mp4/webm)', 'error')
+  uploadMedia(null, kind, f)
+}
+
+// 点击图片放大预览
+function previewImg(url) { previewImgUrl.value = url }
+
 async function closeTicket() {
   try {
     const r = await api('/api/admin/tickets/' + current.value.id + '/close', { method: 'POST', body: {} })
@@ -436,6 +511,16 @@ onUnmounted(() => {
 .msg-human { align-self: flex-end; background: #d97706; color: #fff; }
 .msg-system { align-self: center; background: transparent; color: var(--c-text-3); font-size: 12px; }
 .msg-role { font-size: 10px; opacity: .75; margin-bottom: 3px; }
+.msg-img { max-width: 220px; max-height: 180px; border-radius: 6px; display: block; cursor: zoom-in; border: 1px solid rgba(0,0,0,.08); }
+.msg-video { max-width: 280px; max-height: 220px; border-radius: 6px; display: block; border: 1px solid rgba(0,0,0,.08); background: #000; }
+.drop-tip {
+  position: absolute; left: 0; right: 0; top: -14px; z-index: 30;
+  background: rgba(24,144,255,.08); border: 1.5px dashed #1890ff; border-radius: 8px;
+  color: #1890ff; font-size: 13px; text-align: center; padding: 6px 0;
+  pointer-events: none;
+}
+.img-preview-mask { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: flex; align-items: center; justify-content: center; z-index: 999; cursor: zoom-out; }
+.img-preview { max-width: 80vw; max-height: 80vh; border-radius: 6px; box-shadow: 0 8px 40px rgba(0,0,0,.4); }
 .msg-time { font-size: 10px; margin-top: 4px; }
 .msg-user .msg-time, .msg-human .msg-time { color: rgba(255,255,255,.7); }
 .msg-content { font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }

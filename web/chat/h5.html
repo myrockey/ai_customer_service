@@ -16,7 +16,8 @@ html,body{height:100%;width:100%;overflow:hidden;background:#f5f6f8;-webkit-text
 .chat-app{display:flex;flex-direction:column;height:100vh;height:100dvh;width:100%;background:#fff}
 
 /* 顶部栏 */
-.chat-header{
+/* 顶部栏 */
+.chat-header{position:relative;
   display:flex;align-items:center;gap:10px;
   padding:12px 14px;padding-top:calc(12px + env(safe-area-inset-top));
   background:linear-gradient(135deg,var(--theme,#1890ff),var(--theme-dark,#096dd9));
@@ -37,6 +38,9 @@ html,body{height:100%;width:100%;overflow:hidden;background:#f5f6f8;-webkit-text
   font-size:18px;flex-shrink:0;
 }
 .chat-header .info{flex:1;min-width:0}
+.chat-header .header-links{position:absolute;right:10px;top:50%;transform:translateY(-50%);display:flex;gap:4px;z-index:5}
+.chat-header .admin-link{color:#fff;font-size:11px;text-decoration:none;padding:3px 8px;border:1px solid rgba(255,255,255,.5);border-radius:12px;background:rgba(255,255,255,.14);white-space:nowrap;transition:background .2s}
+.chat-header .admin-link:hover{background:rgba(255,255,255,.3);color:#fff}
 .chat-header .title{font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chat-header .status{font-size:11px;opacity:.9;display:flex;align-items:center;gap:4px;margin-top:1px}
 .chat-header .status .dot{width:6px;height:6px;border-radius:50%;background:#52c41a;display:inline-block}
@@ -120,6 +124,27 @@ html,body{height:100%;width:100%;overflow:hidden;background:#f5f6f8;-webkit-text
 .rating-submit{border:none;background:var(--theme,#1890ff);color:#fff}
 .rating-submit:disabled{background:#ccc;cursor:not-allowed}
 .chat-input .input-row{display:flex;gap:8px;align-items:flex-end}
+.chat-input .img-btn{
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  width:40px;height:40px;flex-shrink:0;border:1px solid #e8e8e8;border-radius:8px;
+  background:#fff;font-size:16px;color:#666;
+}
+.chat-input .img-btn:active{background:#f0f0f0}
+.chat-input .media-btn{
+  display:flex;align-items:center;gap:4px;cursor:pointer;flex-shrink:0;
+  padding:9px 12px;border:1px solid #e8e8e8;border-radius:8px;background:#fff;
+  font-size:13px;color:#555;transition:all .2s;white-space:nowrap;
+}
+.chat-input .media-btn:hover{border-color:var(--theme,#1890ff);color:var(--theme,#1890ff);background:#f4f9ff}
+.chat-input .media-btn:active{background:#eaf4ff}
+.chat-input .drop-tip{
+  position:absolute;left:8px;right:8px;top:46px;z-index:50;
+  background:rgba(24,144,255,.08);border:1.5px dashed var(--theme,#1890ff);border-radius:8px;
+  color:var(--theme,#1890ff);font-size:13px;text-align:center;padding:10px 0;
+  pointer-events:none;opacity:0;transition:opacity .15s;
+}
+.chat-input .drop-tip.show{opacity:1}
+.chat-input{position:relative}
 .chat-input textarea{
   flex:1;border:1px solid #e8e8e8;border-radius:8px;padding:10px 12px;
   font-size:15px;resize:none;outline:none;line-height:1.5;
@@ -168,13 +193,20 @@ html,body{height:100%;width:100%;overflow:hidden;background:#f5f6f8;-webkit-text
   </div>
 
   <!-- 输入区 -->
-  <div class="chat-input">
+  <div class="chat-input" id="chatInput" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
     <div class="toolbar">
       <button class="handoff" onclick="requestHandoff()">👤 转人工</button>
       <button class="rating-btn" onclick="openRating()">⭐ 评价</button>
     </div>
+    <div class="drop-tip" id="dropTip">松开鼠标，发送图片/视频</div>
     <div class="input-row">
-      <textarea id="msgInput" placeholder="请输入您的问题..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+      <label class="media-btn" title="发送图片">🖼 图片
+        <input type="file" accept="image/*" style="display:none;" onchange="uploadMedia(this,'image')" />
+      </label>
+      <label class="media-btn" title="发送视频(≤50MB,mp4/webm)">🎬 视频
+        <input type="file" accept="video/mp4,video/webm" style="display:none;" onchange="uploadMedia(this,'video')" />
+      </label>
+      <textarea id="msgInput" placeholder="请输入您的问题...（支持粘贴/拖拽图片、视频）" rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
       <button class="send-btn" id="sendBtn" onclick="sendMessage()">发送</button>
     </div>
   </div>
@@ -328,7 +360,7 @@ function handleMsg(data){
     case 'chat_reply': hideTyping(); addAI(data.msg); break;
     case 'ticket': hideTyping(); addSystem('🎫 '+(data.reused ? ('您已提交人工客服，正在等待人工接入（工单号：'+(data.ticket_no||'')+'）') : ('工单已创建（'+(data.ticket_no||'')+'），人工客服即将接入'))); break;
     case 'human_notice': hideTyping(); addSystem('👤 '+(data.msg||'人工客服已接入')); break;
-    case 'human_reply': hideTyping(); addAI(data.msg, true); break;
+    case 'human_reply': hideTyping(); if(data.msg_type==='image') addImage(data.msg, true); else if(data.msg_type==='video') addVideo(data.msg, true); else addAI(data.msg, true); break;
     case 'notice': hideTyping(); addSystem(data.msg); break;
     case 'error': hideTyping(); addSystem('⚠️ '+(data.msg||'出错了'));
       if (data.code === 'concurrency_full') {
@@ -357,9 +389,9 @@ function renderHistory(msgs){
   msgs.forEach(function(m){
     var role = m.role||m.sender||'ai';
     var content = m.content||m.msg||m.message||'';
-    if(role==='user'||role==='customer') addUser(content,m.created_at||m.timestamp,true);
+    if(role==='user'||role==='customer') { if(m.msg_type==='image') addImage(content,false,m.created_at||m.timestamp,true); else if(m.msg_type==='video') addVideo(content,false,m.created_at||m.timestamp,true); else addUser(content,m.created_at||m.timestamp,true); }
     else if(role==='system'||role==='notice') addSystem(content,true);
-    else addAI(content,false,m.created_at||m.timestamp,true);
+    else { if(m.msg_type==='image') addImage(content,false,m.created_at||m.timestamp,true); else if(m.msg_type==='video') addVideo(content,false,m.created_at||m.timestamp,true); else addAI(content,false,m.created_at||m.timestamp,true); }
   });
   scrollBottom();
 }
@@ -374,12 +406,34 @@ function addUser(text,time,noScroll){
   document.getElementById('chatBody').appendChild(d);
   if(!noScroll) scrollBottom();
 }
+// 视频消息（客服发送的视频 / 用户历史视频）
+function addVideo(url,isHuman,time,noScroll){
+  var w=document.getElementById('welcomeMsg'); if(w) w.style.display='none';
+  var d=document.createElement('div'); d.className='msg '+(isHuman?'ai':'user');
+  var av=isHuman?'👤':'😀';
+  d.innerHTML='<div style="font-size:22px;flex-shrink:0;margin-top:6px">'+av+'</div><div><div class="bubble" style="padding:4px"><video src="'+url+'" controls preload="metadata" style="max-width:260px;max-height:220px;border-radius:8px;display:block;background:#000"></video></div><div class="time"></div></div>';
+  d.querySelector('.time').textContent=fmtTime(time);
+  document.getElementById('chatBody').appendChild(d);
+  if(!noScroll) scrollBottom();
+}
+
 
 function addAI(text,isHuman,time,noScroll){
   var d=document.createElement('div'); d.className='msg ai';
   var av=isHuman?'👤':'🤖';
   d.innerHTML='<div style="font-size:22px;flex-shrink:0;margin-top:6px">'+av+'</div><div><div class="bubble"></div><div class="time"></div></div>';
   d.querySelector('.bubble').textContent=text;
+  d.querySelector('.time').textContent=fmtTime(time);
+  document.getElementById('chatBody').appendChild(d);
+  if(!noScroll) scrollBottom();
+}
+
+// 图片消息（客服发送的图片 / 用户历史图片）
+function addImage(url,isHuman,time,noScroll){
+  var w=document.getElementById('welcomeMsg'); if(w) w.style.display='none';
+  var d=document.createElement('div'); d.className='msg '+(isHuman?'ai':'user');
+  var av=isHuman?'👤':'😀';
+  d.innerHTML='<div style="font-size:22px;flex-shrink:0;margin-top:6px">'+av+'</div><div><div class="bubble" style="padding:4px"><img src="'+url+'" onclick="window.open(this.src)" style="max-width:220px;max-height:200px;border-radius:8px;display:block;cursor:pointer" /></div><div class="time"></div></div>';
   d.querySelector('.time').textContent=fmtTime(time);
   document.getElementById('chatBody').appendChild(d);
   if(!noScroll) scrollBottom();
@@ -487,6 +541,63 @@ function sendMessage(){
   showTyping();
   try{ ws.send(JSON.stringify({type:'chat',msg:text})); }
   catch(e){ hideTyping(); addSystem('发送失败：'+e.message); }
+}
+
+// 图片/视频消息上传：校验 → 上传 → 本地显示 → WS 发送 msg_type=image/video
+// input 为空时表示来自拖拽（file 直接传入）
+async function uploadMedia(input, kind, file){
+  if(input){ file = input.files && input.files[0]; input.value=''; }
+  if(!file) return;
+  if(kind==='image'){
+    if(!/\.(jpe?g|png|gif|webp)$/i.test(file.name||'')){ addSystem('仅支持 jpg/png/gif/webp 图片'); return; }
+    if(file.size>5*1024*1024){ addSystem('图片不能超过 5MB'); return; }
+  }else{
+    if(!/\.(mp4|webm)$/i.test(file.name||'')){ addSystem('仅支持 mp4/webm 视频'); return; }
+    if(file.size>50*1024*1024){ addSystem('视频不能超过 50MB'); return; }
+  }
+  if(!wsConnected){ addSystem('连接未建立，请稍候...'); return; }
+  var fd=new FormData();
+  fd.append('file', file);
+  var upUrl=CONFIG.server+'/api/user/upload?user_id='+encodeURIComponent(userId||'');
+  try{
+    var token = authToken || await ensureToken();
+    var resp=await fetch(upUrl,{method:'POST',headers:{'Authorization':'Bearer '+token},body:fd});
+    var data=await resp.json();
+    if(data.code!==0){ addSystem('上传失败：'+(data.msg||'')); return; }
+    var url=data.data.url;
+    if(kind==='image') addImage(url,false); else addVideo(url,false);
+    ws.send(JSON.stringify({type:'chat',msg:url,msg_type:kind}));
+  }catch(e){ addSystem('上传失败：'+e.message); }
+}
+
+// 按 MIME 优先、扩展名兜底判定文件类型（拖拽文件的 type 常为空字符串，必须按扩展名兜底）
+function kindOf(f){
+  var t=(f.type||'').toLowerCase();
+  if(/^image\//.test(t) || /\.(jpe?g|png|gif|webp)$/i.test(f.name||'')) return 'image';
+  if(/^video\//.test(t) || /\.(mp4|webm)$/i.test(f.name||'')) return 'video';
+  return '';
+}
+
+// ============ 拖拽上传 ============
+function onDragOver(e){
+  e.preventDefault();
+  var tip=document.getElementById('dropTip');
+  if(tip && !tip.classList.contains('show')) tip.classList.add('show');
+}
+function onDragLeave(e){
+  var tip=document.getElementById('dropTip');
+  var ct=document.getElementById('chatInput');
+  if(tip && ct && !ct.contains(e.relatedTarget)) tip.classList.remove('show');
+}
+function onDrop(e){
+  e.preventDefault();
+  var tip=document.getElementById('dropTip');
+  if(tip) tip.classList.remove('show');
+  var f=e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if(!f) return;
+  var kind = kindOf(f);
+  if(!kind){ addSystem('仅支持图片(jpg/png/gif/webp)或视频(mp4/webm)'); return; }
+  uploadMedia(null, kind, f);
 }
 
 function quickSend(text){

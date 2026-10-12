@@ -169,6 +169,8 @@ services:
     volumes:
       # RSA 私钥持久化（登录加密；生产务必备份该目录，更换密钥会导致已缓存公钥失效）
       - ./data:/app/data
+      # 会话图片存储卷（客服发送的图片消息；nginx 同卷静态服务 /msg_files/）
+      - cs_msg_files:/app/msg_files
     depends_on:
       mysql:
         condition: service_healthy
@@ -200,6 +202,8 @@ services:
       - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       # 知识库原文件共享卷（与 agent 同一卷，静态服务 /kb_files/）
       - cs_kb_files:/usr/share/nginx/html/kb_files
+      # 会话图片共享卷（与 go 同一卷，静态服务 /msg_files/）
+      - cs_msg_files:/usr/share/nginx/html/msg_files
     depends_on:
       - go
     networks:
@@ -371,6 +375,8 @@ volumes:
   cs_grafana_data:
   # 知识库原文件共享卷（agent 写入 /app/data/kb_files，nginx 静态服务 /kb_files/）
   cs_kb_files:
+  # 会话图片共享卷（go 写入 /app/msg_files，nginx 静态服务 /msg_files/）
+  cs_msg_files:
 
 # ==========================================================================
 # 网络

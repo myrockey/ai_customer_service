@@ -66,6 +66,7 @@ type Message struct {
 	ThreadID  string    `gorm:"column:thread_id;size:255;index" json:"thread_id"`
 	Role      string    `gorm:"column:role;size:16" json:"role"` // user / ai / human / system
 	Content   string    `gorm:"column:content;type:text" json:"content"`
+	MsgType   string    `gorm:"column:msg_type;size:16;default:text" json:"msg_type"` // text / image
 	TenantID  string    `gorm:"column:tenant_id;size:64;index" json:"tenant_id"`
 	TicketID  *uint64   `gorm:"column:ticket_id;index" json:"ticket_id,omitempty"` // 归属工单ID，NULL=不归属
 	IsRead    int       `gorm:"column:is_read;type:tinyint(1);default:0" json:"is_read"` // 0=未读，1=已读
@@ -78,6 +79,7 @@ type ArchivedMessage struct {
 	ThreadID   string    `gorm:"column:thread_id;size:255;index" json:"thread_id"`
 	Role       string    `gorm:"column:role;size:16" json:"role"`
 	Content    string    `gorm:"column:content;type:text" json:"content"`
+	MsgType    string    `gorm:"column:msg_type;size:16;default:text" json:"msg_type"` // text / image
 	TenantID   string    `gorm:"column:tenant_id;size:64;index" json:"tenant_id"`
 	TicketID   *uint64   `gorm:"column:ticket_id;index" json:"ticket_id,omitempty"`
 	IsRead     int       `gorm:"column:is_read;type:tinyint(1);default:0" json:"is_read"`
@@ -93,6 +95,7 @@ type MessageWithArchive struct {
 	ThreadID  string    `json:"thread_id"`
 	Role      string    `json:"role"`
 	Content   string    `json:"content"`
+	MsgType   string    `json:"msg_type"` // text / image
 	TenantID  string    `json:"tenant_id"`
 	TicketID  *uint64   `json:"ticket_id,omitempty"`
 	IsRead    int       `json:"is_read"`

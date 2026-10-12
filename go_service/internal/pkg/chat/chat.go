@@ -25,7 +25,7 @@ type ChatResult struct {
 //  2. 若该线程处于人工接管状态 → 转给管理端，不再调用 Agent
 //  3. 否则调用 Python Agent 获取回复；遇 HITL 中断则创建工单并通知管理端
 func ProcessUserMessage(threadID, userID, msg, traceID string) ChatResult {
-	_ = repository.SaveMessage(threadID, "user", msg)
+	_ = repository.SaveMessage(threadID, "user", msg, "text")
 
 	// 人工接管中：用户消息归属当前工单，直接转人工（按租户推送给对应管理端）
 	htk, err := repository.GetHandlingTicket(threadID)
@@ -85,7 +85,7 @@ func ProcessUserMessage(threadID, userID, msg, traceID string) ChatResult {
 			})
 			return ChatResult{Kind: "ticket", TicketNo: t.TicketNo, Msg: "您已提交人工客服，正在等待处理（工单号：" + t.TicketNo + "）"}
 		}
-		_ = repository.SaveTicketMessage(threadID, "system", "已提交人工客服，工单号："+t.TicketNo, t.ID)
+		_ = repository.SaveTicketMessage(threadID, "system", "已提交人工客服，工单号："+t.TicketNo, "text", t.ID)
 		// 转接诉求消息归属新工单（工单会话隔离：详情只显示本工单消息）
 		_ = repository.AssignLastUserMessage(threadID, t.ID)
 
@@ -109,9 +109,9 @@ func ProcessUserMessage(threadID, userID, msg, traceID string) ChatResult {
 	content := agentResp.Content
 	// AI 回复：接管中归属当前工单（人工会话记录）；待处理/普通对话不归属
 	if htk, _ := repository.GetHandlingTicket(threadID); htk != nil {
-		_ = repository.SaveTicketMessage(threadID, "ai", content, htk.ID)
+		_ = repository.SaveTicketMessage(threadID, "ai", content, "text", htk.ID)
 	} else {
-		_ = repository.SaveMessage(threadID, "ai", content)
+		_ = repository.SaveMessage(threadID, "ai", content, "text")
 	}
 	return ChatResult{Kind: "reply", Msg: content}
 }

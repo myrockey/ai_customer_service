@@ -1,4 +1,4 @@
-﻿package router
+package router
 
 import (
 	"net/http"
@@ -92,6 +92,8 @@ func SetupRoutes(r *gin.Engine) {
 
 	// ============ 用户聊天对外接口 ============
 	r.POST("/api/user/chat", middleware.UserAuth(), handler.UserChat)
+	// P1：用户端上传图片/视频（发送 msg_type=image/video 消息前先上传拿 URL）
+	r.POST("/api/user/upload", middleware.UserAuth(), handler.UserSessionMediaUpload)
 
 	// ============ 用户历史消息 ============
 	r.GET("/api/user/messages", middleware.UserAuth(), handler.UserMessages)
@@ -207,6 +209,8 @@ func SetupRoutes(r *gin.Engine) {
 			biz.POST("/sessions/:thread_id/reextract", middleware.RequirePerm(permission.SessionProfileEdit), handler.AdminCustomerReextract)
 			biz.GET("/sessions/:thread_id/tags", middleware.RequirePerm(permission.SessionView), handler.AdminSessionTagsGet)
 			biz.PUT("/sessions/:thread_id/tags", middleware.RequirePerm(permission.SessionProfileEdit), handler.AdminSessionTagsUpdate)
+			// 会话图片上传（人工客服回复图片消息，图片 URL 以 msg_type=image 发送）
+			biz.POST("/sessions/upload", middleware.RequirePerm(permission.TicketHandle), handler.AdminSessionMediaUpload)
 			// 客户列表（按人聚合，支持搜索）
 			biz.GET("/customers", middleware.RequirePerm(permission.CustomerView), handler.AdminCustomerList)
 

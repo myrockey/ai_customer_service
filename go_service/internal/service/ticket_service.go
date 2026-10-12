@@ -224,7 +224,7 @@ func TakeoverTicket(tk *model.Ticket, waitTime int, traceID string, handlerUID u
 	_ = repository.AddTicketLog(tk.ID, tk.ThreadID, tk.TenantID, "takeover",
 		model.TicketStatusPending, model.TicketStatusHandling, tk.Priority, tk.Priority,
 		handlerName, "人工接管工单")
-	_ = repository.SaveTicketMessage(tk.ThreadID, "system", "人工客服已接管对话，工单号："+tk.TicketNo, tk.ID)
+	_ = repository.SaveTicketMessage(tk.ThreadID, "system", "人工客服已接管对话，工单号："+tk.TicketNo, "text", tk.ID)
 
 	// 推送给用户端
 	ws.WSHub.SendToUser(tk.ThreadID, map[string]interface{}{
@@ -241,17 +241,21 @@ func TakeoverTicket(tk *model.Ticket, waitTime int, traceID string, handlerUID u
 }
 
 // ReplyTicket 人工回复工单（含消息保存、WebSocket 推送）
-func ReplyTicket(tk *model.Ticket, content string) error {
-	if err := repository.SaveTicketMessage(tk.ThreadID, "human", content, tk.ID); err != nil {
+// msgType: text / image（content 为文本或图片 URL）
+func ReplyTicket(tk *model.Ticket, content, msgType string) error {
+	if msgType == "" {
+		msgType = "text"
+	}
+	if err := repository.SaveTicketMessage(tk.ThreadID, "human", content, msgType, tk.ID); err != nil {
 		return err
 	}
 	// 实时推送给用户端
 	ws.WSHub.SendToUser(tk.ThreadID, map[string]interface{}{
-		"type": "human_reply", "msg": content, "ticket_no": tk.TicketNo,
+		"type": "human_reply", "msg": content, "msg_type": msgType, "ticket_no": tk.TicketNo,
 	})
 	// 广播对应租户管理端同步（多管理端）
 	ws.WSHub.SendToAdminsByTenant(auth.TenantFromUserID(tk.UserID), map[string]interface{}{
-		"type": "human_reply", "thread_id": tk.ThreadID, "msg": content,
+		"type": "human_reply", "thread_id": tk.ThreadID, "msg": content, "msg_type": msgType,
 	})
 	return nil
 }
@@ -271,7 +275,7 @@ func CloseTicket(tk *model.Ticket, operator string) error {
 	_ = repository.AddTicketLog(tk.ID, tk.ThreadID, tk.TenantID, "close",
 		model.TicketStatusHandling, model.TicketStatusClosed, tk.Priority, tk.Priority,
 		operator, "关闭工单，转回智能客服")
-	_ = repository.SaveTicketMessage(tk.ThreadID, "system", "本次人工会话已结束，转回智能客服", tk.ID)
+	_ = repository.SaveTicketMessage(tk.ThreadID, "system", "本次人工会话已结束，转回智能客服", "text", tk.ID)
 
 	ws.WSHub.SendToUser(tk.ThreadID, map[string]interface{}{
 		"type": "human_notice", "msg": "本次人工会话已结束，智能客服继续为您服务",
@@ -319,7 +323,7 @@ func TransferTicket(tk *model.Ticket, toUID uint64, toName, operator string) err
 	_ = repository.AdjustHandlingCount(config.DB, tk.TenantID, toUID, 1)
 	_ = repository.AddTicketLog(tk.ID, tk.ThreadID, tk.TenantID, "transfer",
 		oldStatus, newStatus, tk.Priority, tk.Priority, operator, "转交工单给客服 "+toName)
-	_ = repository.SaveTicketMessage(tk.ThreadID, "system", "工单已转交给客服 "+toName+"，请继续为您服务", tk.ID)
+	_ = repository.SaveTicketMessage(tk.ThreadID, "system", "工单已转交给客服 "+toName+"，请继续为您服务", "text", tk.ID)
 	ws.WSHub.SendToAdminsByTenant(tk.TenantID,
 		map[string]interface{}{"type": "ticket_update", "ticket": tk})
 	return nil
@@ -342,7 +346,7 @@ func ApproveTicket(tk *model.Ticket, input ApproveTicketInput) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		_ = repository.SaveTicketMessage(tk.ThreadID, "system", "转接申请已取消，智能客服继续服务", tk.ID)
+		_ = repository.SaveTicketMessage(tk.ThreadID, "system", "转接申请已取消，智能客服继续服务", "text", tk.ID)
 		ws.WSHub.SendToUser(tk.ThreadID, map[string]interface{}{
 			"type": "human_notice", "msg": "转接申请已取消，智能客服继续为您服务",
 		})

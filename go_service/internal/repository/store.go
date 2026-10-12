@@ -22,18 +22,22 @@ const HumanSessionTimeout = 10 * time.Minute
 
 // SaveMessage 保存一条会话消息（租户从 thread_id 前缀提取）
 // 不归属任何工单：用于待处理/未接管期间的 AI 对话
-func SaveMessage(threadID, role, content string) error {
-	return saveMessage(threadID, role, content, nil)
+// msgType: text / image（content 为文本或图片 URL）
+func SaveMessage(threadID, role, content, msgType string) error {
+	return saveMessage(threadID, role, content, msgType, nil)
 }
 
 // SaveTicketMessage 保存一条归属指定工单的会话消息（人工会话专用）
-func SaveTicketMessage(threadID, role, content string, ticketID uint64) error {
-	return saveMessage(threadID, role, content, &ticketID)
+func SaveTicketMessage(threadID, role, content, msgType string, ticketID uint64) error {
+	return saveMessage(threadID, role, content, msgType, &ticketID)
 }
 
-func saveMessage(threadID, role, content string, ticketID *uint64) error {
+func saveMessage(threadID, role, content, msgType string, ticketID *uint64) error {
 	if content == "" {
 		return nil
+	}
+	if msgType == "" {
+		msgType = "text"
 	}
 	// 用户发送的消息默认已读；AI/人工/系统消息默认未读
 	isRead := 0
@@ -44,6 +48,7 @@ func saveMessage(threadID, role, content string, ticketID *uint64) error {
 		ThreadID: threadID,
 		Role:     role,
 		Content:  content,
+		MsgType:  msgType,
 		TenantID: auth.TenantFromThreadID(threadID),
 		TicketID: ticketID,
 		IsRead:   isRead,
@@ -106,10 +111,10 @@ func ListMessages(threadID string) ([]model.Message, error) {
 func ListMessagesWithArchive(threadID string) ([]model.MessageWithArchive, error) {
 	var msgs []model.MessageWithArchive
 	err := config.DB.Raw(`
-		SELECT id, thread_id, role, content, tenant_id, ticket_id, is_read, created_at, 0 AS archived
+		SELECT id, thread_id, role, content, msg_type, tenant_id, ticket_id, is_read, created_at, 0 AS archived
 		FROM messages WHERE thread_id = ?
 		UNION ALL
-		SELECT id, thread_id, role, content, tenant_id, ticket_id, is_read, created_at, 1 AS archived
+		SELECT id, thread_id, role, content, msg_type, tenant_id, ticket_id, is_read, created_at, 1 AS archived
 		FROM messages_archive WHERE thread_id = ?
 		ORDER BY created_at ASC, id ASC`, threadID, threadID).
 		Scan(&msgs).Error
@@ -169,7 +174,7 @@ func IsThreadHumanServed(threadID string) (bool, error) {
 	// 超时无人处理 → 自动结束人工接管，转回智能客服
 	if time.Since(lastActive) > HumanSessionTimeout {
 		_ = UpdateTicketStatus(&tk, model.TicketStatusClosed)
-		_ = SaveMessage(threadID, "system", "人工客服长时间未响应，已自动转回智能客服")
+		_ = SaveMessage(threadID, "system", "人工客服长时间未响应，已自动转回智能客服", "text")
 		ws.WSHub.SendToUser(threadID, map[string]interface{}{
 			"type": "human_notice",
 			"msg":  "人工客服暂时无法响应，已自动转回智能客服，我可以继续为您服务",

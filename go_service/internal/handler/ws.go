@@ -82,8 +82,9 @@ func HandleUserWS() gin.HandlerFunc {
 				return
 			}
 			var msg struct {
-				Type string `json:"type"`
-				Msg  string `json:"msg"`
+				Type    string `json:"type"`
+				Msg     string `json:"msg"`
+				MsgType string `json:"msg_type"` // text / image（image 时 msg 为图片 URL）
 			}
 			if err := json.Unmarshal(data, &msg); err != nil {
 				continue
@@ -115,9 +116,32 @@ func HandleUserWS() gin.HandlerFunc {
 					continue
 				}
 				traceID := c.GetString(config.TraceIDKey)
+
+				// P1/P1.5：用户发送图片/视频消息（msg_type=image/video，msg 为上传后的 URL）
+				// AI 阶段当前模型不支持识图/看视频：落库（客服历史可见）+ 提示引导转人工，不调用 agent；
+				// 人工接管中：直接转人工客服查看
+				if msg.MsgType == "image" || msg.MsgType == "video" {
+					_ = repository.SaveMessage(userID, "user", msg.Msg, msg.MsgType)
+					htk, _ := repository.GetHandlingTicket(userID)
+					if htk != nil {
+						_ = repository.AssignLastUserMessage(userID, htk.ID)
+						ws.WSHub.SendToAdminsByTenant(auth.TenantFromThreadID(userID), map[string]interface{}{
+							"type": "user_msg", "thread_id": userID, "user_id": userID, "msg": msg.Msg, "msg_type": msg.MsgType,
+						})
+						ws.WSHub.SendToUser(userID, map[string]interface{}{
+							"type": "human_notice", "msg": "您当前由人工客服接待，文件已转给人工客服",
+						})
+					} else {
+						ws.WSHub.SendToUser(userID, map[string]interface{}{
+							"type": "notice", "msg": "图片/视频已收到，当前 AI 暂不支持查看内容，如需发送请转人工客服",
+						})
+					}
+					continue
+				}
+
 				// P2-1：流式输出处理
 				// 1. 落库用户消息
-				_ = repository.SaveMessage(userID, "user", msg.Msg)
+				_ = repository.SaveMessage(userID, "user", msg.Msg, "text")
 
 				// 2. 人工接管中：消息归属当前工单，直接转人工
 				htk, _ := repository.GetHandlingTicket(userID)
@@ -171,9 +195,9 @@ func HandleUserWS() gin.HandlerFunc {
 						// onEnd: 流式结束，推送完整消息并落库
 						func(content string) {
 							if htk, _ := repository.GetHandlingTicket(userID); htk != nil {
-								_ = repository.SaveTicketMessage(userID, "ai", content, htk.ID)
+								_ = repository.SaveTicketMessage(userID, "ai", content, "text", htk.ID)
 							} else {
-								_ = repository.SaveMessage(userID, "ai", content)
+								_ = repository.SaveMessage(userID, "ai", content, "text")
 							}
 							ws.WSHub.SendToUser(userID, map[string]interface{}{
 								"type": "chat_end", "msg": content,
@@ -201,7 +225,7 @@ func HandleUserWS() gin.HandlerFunc {
 								return
 							}
 							if !reused {
-								_ = repository.SaveTicketMessage(userID, "system", "已提交人工客服，工单号："+t.TicketNo, t.ID)
+								_ = repository.SaveTicketMessage(userID, "system", "已提交人工客服，工单号："+t.TicketNo, "text", t.ID)
 								// 转接诉求消息归属新工单
 								_ = repository.AssignLastUserMessage(userID, t.ID)
 								ws.WSHub.SendToAdminsByTenant(auth.TenantFromUserID(userID), map[string]interface{}{

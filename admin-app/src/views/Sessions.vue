@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div>
     <div class="sv-layout">
       <!-- 会话列表 -->
@@ -126,7 +126,11 @@
           <div class="msg-list" ref="msgBox">
             <div v-for="(m, i) in messages" :key="i" class="msg" :class="'msg-' + m.role">
               <span class="msg-role" :class="roleClass(m.role)">{{ roleText(m.role) }}</span>
-              <div class="msg-content">{{ m.content }}</div>
+              <div class="msg-content">
+                <img v-if="m.msg_type === 'image'" :src="m.content" class="msg-img" @click="previewImg(m.content)" />
+                <video v-else-if="m.msg_type === 'video'" :src="m.content" class="msg-video" controls preload="metadata"></video>
+                <template v-else>{{ m.content }}</template>
+              </div>
               <div class="msg-time text-3">{{ fmtTime(m.created_at) }}<span v-if="m.archived" class="archived-tag">已归档</span></div>
             </div>
             <div v-if="!messages.length" class="empty">暂无消息</div>
@@ -138,6 +142,11 @@
 
     <!-- 清理归档弹窗（会话数据维护） -->
     <CleanupDialog v-if="showCleanup" @close="showCleanup = false" @done="load" />
+
+    <!-- 图片预览 -->
+    <div v-if="previewImgUrl" class="img-preview-mask" @click="previewImgUrl = ''">
+      <img :src="previewImgUrl" class="img-preview" @click.stop />
+    </div>
   </div>
 </template>
 
@@ -170,6 +179,8 @@ const profileOpen = ref(false)
 const savingProfile = ref(false)
 const reextracting = ref(false)
 const msgBox = ref(null)
+const previewImgUrl = ref('')
+function previewImg(url) { previewImgUrl.value = url }
 
 const pages = computed(() => Math.max(1, Math.ceil(total.value / size)))
 
@@ -363,5 +374,9 @@ onMounted(() => {
 .archived-tag { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 4px; background: rgba(0,0,0,.06); font-size: 10px; color: var(--c-text-2); }
 .msg-user .msg-time, .msg-human .msg-time { color: rgba(255,255,255,.7); }
 .msg-content { font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.msg-img { max-width: 220px; max-height: 180px; border-radius: 6px; display: block; cursor: zoom-in; border: 1px solid rgba(0,0,0,.08); }
+.msg-video { max-width: 280px; max-height: 220px; border-radius: 6px; display: block; border: 1px solid rgba(0,0,0,.08); background: #000; }
+.img-preview-mask { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: flex; align-items: center; justify-content: center; z-index: 999; cursor: zoom-out; }
+.img-preview { max-width: 80vw; max-height: 80vh; border-radius: 6px; box-shadow: 0 8px 40px rgba(0,0,0,.4); }
 .empty { text-align: center; color: var(--c-text-3); padding: 24px 0; font-size: 13px; }
 </style>

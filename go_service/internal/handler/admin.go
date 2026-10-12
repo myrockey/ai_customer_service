@@ -173,6 +173,7 @@ func AdminTicketReply(c *gin.Context) {
 	}
 	var body struct {
 		Content string `json:"content"`
+		MsgType string `json:"msg_type"` // text / image（image 时 content 为图片 URL）
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || body.Content == "" {
 		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "content 不能为空"})
@@ -195,7 +196,7 @@ func AdminTicketReply(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"code": 403, "msg": "该工单由 " + orDash(tk.HandlerName) + " 接管中，无权回复"})
 		return
 	}
-	if err := service.ReplyTicket(tk, body.Content); err != nil {
+	if err := service.ReplyTicket(tk, body.Content, body.MsgType); err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": err.Error()})
 		return
 	}
