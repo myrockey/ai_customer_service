@@ -18,7 +18,7 @@
       <div style="display:flex;gap:8px;">
         <button v-if="progressActive && !showIndexProgress" class="btn btn-sm" @click="showIndexProgress = true">查看索引进度</button>
         <button v-if="session.is_platform_admin" class="btn btn-sm" @click="showSetting = true">上传大小设置</button>
-        <button class="btn btn-primary btn-sm" @click="openUpload">上传文档</button>
+        <button class="btn btn-primary btn-sm" v-perm="'knowledge:add'" @click="openUpload">上传文档</button>
       </div>
     </div>
 
@@ -28,10 +28,10 @@
         <button class="btn btn-sm" @click="selectAll">全选本页</button>
         <button class="btn btn-sm" @click="selectAllAll">全选全部</button>
         <template v-if="selected.length">
-          <button class="btn btn-sm btn-primary" @click="startIndex">开始索引</button>
-          <button class="btn btn-sm" @click="batchCategory">批量分类</button>
-          <button class="btn btn-sm" @click="batchReindex">批量重索引</button>
-          <button class="btn btn-sm btn-danger" @click="batchDelete">批量删除</button>
+          <button class="btn btn-sm btn-primary" v-perm="'knowledge:add'" @click="startIndex">开始索引</button>
+          <button class="btn btn-sm" v-perm="'knowledge:edit'" @click="batchCategory">批量分类</button>
+          <button class="btn btn-sm" v-perm="'knowledge:edit'" @click="batchReindex">批量重索引</button>
+          <button class="btn btn-sm btn-danger" v-perm="'knowledge:remove'" @click="batchDelete">批量删除</button>
           <button class="btn btn-sm" @click="clearSelected">取消选择</button>
         </template>
       </div>
@@ -57,9 +57,9 @@
         <template #cell-actions="{ row }">
           <button class="btn btn-sm" @click="preview(row)">预览</button>
           <button class="btn btn-sm" @click="download(row)">下载</button>
-          <button class="btn btn-sm" @click="setCategory(row)">分类</button>
-          <button class="btn btn-sm" @click="reindex(row)">重索引</button>
-          <button class="btn btn-sm btn-danger" @click="remove(row)">删除</button>
+          <button class="btn btn-sm" v-perm="'knowledge:edit'" @click="setCategory(row)">分类</button>
+          <button class="btn btn-sm" v-perm="'knowledge:edit'" @click="reindex(row)">重索引</button>
+          <button class="btn btn-sm btn-danger" v-perm="'knowledge:remove'" @click="remove(row)">删除</button>
         </template>
       </DataTable>
       <Pagination :total="total" :page="page" :size="size" @change="onPage" />

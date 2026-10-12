@@ -46,7 +46,7 @@
 
     <!-- 列表 -->
     <div class="head-row" style="margin-top:4px;">
-      <div class="filters" style="gap:8px;">
+      <div class="filters">
         <input v-model="filter.q" class="input" style="width:180px;" placeholder="会话ID / 标签 / 留言" @keyup.enter="loadList" />
         <select v-model="filter.score" class="select" style="width:110px;" @change="loadList">
           <option :value="''">全部星级</option>
@@ -164,3 +164,8 @@ onMounted(() => {
   loadList()
 })
 </script>
+
+<style scoped>
+.head-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+</style>

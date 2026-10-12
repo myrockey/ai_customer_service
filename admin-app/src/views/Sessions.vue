@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <div class="sv-layout">
       <!-- 会话列表 -->
@@ -20,7 +20,7 @@
           <button class="btn btn-sm" @click="load">查询</button>
           <button class="btn btn-sm" @click="resetFilters">重置</button>
           <button class="btn btn-sm" @click="load">刷新</button>
-          <button v-if="canCleanup" class="btn btn-sm" @click="showCleanup = true">🗑 清理归档</button>
+          <button v-if="canCleanup" class="btn btn-sm" v-perm="'session:cleanup'" @click="showCleanup = true">🗑 清理归档</button>
           <span class="text-3" style="font-size:12px;margin-left:10px;">标签</span>
           <input v-model="tagFilter" class="input" style="width:110px;height:26px;"
                  placeholder="按标签筛选" @keyup.enter="load" @input="onTagFilterInput" />
@@ -86,7 +86,7 @@
             <div class="tag-body">
               <input v-model="tagsText" class="input" style="flex:1;"
                      placeholder="如：意向客户,需要回访（逗号分隔）" @keyup.enter="saveTags" />
-              <button class="btn btn-sm btn-primary" :disabled="savingTags" @click="saveTags">
+              <button class="btn btn-sm btn-primary" :disabled="savingTags" v-perm="'session:profile:edit'" @click="saveTags">
                 {{ savingTags ? '保存中...' : '保存' }}
               </button>
             </div>
@@ -111,10 +111,10 @@
                 <div class="p-field p-field-wide"><label>备注</label><input v-model="profile.remark" class="input" /></div>
               </div>
               <div class="profile-actions">
-                <button class="btn btn-sm btn-primary" :disabled="savingProfile" @click="saveProfile">
+                <button class="btn btn-sm btn-primary" :disabled="savingProfile" v-perm="'session:profile:edit'" @click="saveProfile">
                   {{ savingProfile ? '保存中...' : '保存' }}
                 </button>
-                <button class="btn btn-sm" :disabled="reextracting" @click="reextract">
+                <button class="btn btn-sm" :disabled="reextracting" v-perm="'session:profile:edit'" @click="reextract">
                   {{ reextracting ? '提取中...' : '重新提取电话/邮箱' }}
                 </button>
                 <span class="text-3" style="font-size:11px;">电话/邮箱自动提取</span>

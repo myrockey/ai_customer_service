@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="head-row">
-      <div class="filters" style="gap:8px;">
+      <div class="filters">
         <input v-model="filter.q" class="input" style="width:180px;" placeholder="标题/内容关键词" @keyup.enter="search" />
         <input v-model="filter.category" class="input" style="width:120px;" placeholder="分类" @keyup.enter="search" />
         <select v-model="filter.active" class="select" style="width:110px;">
@@ -12,7 +12,7 @@
         <button class="btn btn-sm btn-primary" @click="search">查询</button>
         <button class="btn btn-sm" @click="resetFilter">重置</button>
       </div>
-      <button class="btn btn-primary btn-sm" @click="openCreate">+ 新增话术</button>
+      <button class="btn btn-primary btn-sm" v-perm="'quickreply:add'" @click="openCreate">+ 新增话术</button>
     </div>
 
     <div class="card" style="margin-top:16px;">
@@ -29,8 +29,8 @@
           </button>
         </template>
         <template #cell-actions="{ row }">
-          <button class="btn btn-sm" @click="openEdit(row)">编辑</button>
-          <button class="btn btn-sm btn-danger" @click="del(row)">删除</button>
+          <button class="btn btn-sm" v-perm="'quickreply:edit'" @click="openEdit(row)">编辑</button>
+          <button class="btn btn-sm btn-danger" v-perm="'quickreply:remove'" @click="del(row)">删除</button>
         </template>
       </DataTable>
     </div>
@@ -159,3 +159,8 @@ async function del(row) {
 
 onMounted(load)
 </script>
+
+<style scoped>
+.head-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+</style>

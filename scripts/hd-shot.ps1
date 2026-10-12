@@ -5,6 +5,9 @@ param(
     [string]$Out = "docs\cs_images\平台-租户管理.PNG",
     [string]$AppKey = "admin_key",
     [string]$Secret = "admin_secret",
+    [string]$Tenant = "",          # 子账号登录：租户ID
+    [string]$Username = "",        # 子账号登录：用户名
+    [string]$UserPassword = "",    # 子账号登录：密码
     [int]$Width = 1920,
     [int]$Height = 1080,
     [string]$PageUrl = ""   # 自定义完整 URL（如 SDK 演示页），非空时忽略 Route
@@ -91,12 +94,14 @@ Send-Cdp "Emulation.setDeviceMetricsOverride" @{ width = $Width; height = $Heigh
 # 6. 打开后台同源页并注入登录态
 Send-Cdp "Page.navigate" @{ url = "$Base/admin/" } $sid | Out-Null
 Start-Sleep -Seconds 2
+$bodyExpr = if ($Username) { "{ tenant_id: '$Tenant', username: '$Username', password: '$UserPassword', encrypted: false }" } else { "{ app_key: '$AppKey', app_secret: '$Secret' }" }
+$apiPath = if ($Username) { 'user-token' } else { 'token' }
 $expr = @"
 (async () => {
-    const r = await fetch('$Base/api/auth/token', {
+    const r = await fetch('$Base/api/auth/$apiPath', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ app_key: '$AppKey', app_secret: '$Secret' })
+        body: JSON.stringify($bodyExpr)
     });
     const j = await r.json();
     if (j.code !== 0 || !j.data) return 'LOGIN_FAIL:' + j.code;

@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="tickets">
     <div class="tk-layout">
       <!-- 工单列表 -->
@@ -100,22 +100,22 @@
                   <option :value="0">选择客服...</option>
                   <option v-for="m in members" :key="m.id" :value="m.id">{{ m.nickname || m.username }}</option>
                 </select>
-                <button class="btn btn-sm btn-primary" :disabled="!transferTo" @click="transferTicket">指派</button>
+                <button class="btn btn-sm btn-primary" :disabled="!transferTo" v-perm="'ticket:handle'" @click="transferTicket">指派</button>
               </template>
-              <button class="btn btn-primary btn-sm" @click="takeover">接管对话</button>
+              <button class="btn btn-primary btn-sm" v-perm="'ticket:handle'" @click="takeover">接管对话</button>
             </template>
             <template v-if="current.status === 1">
               <div v-if="canHandle()">
                 <textarea v-model="replyText" class="textarea" style="min-height:60px;" placeholder="回复用户消息..."></textarea>
                 <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center;">
-                  <button class="btn btn-primary btn-sm" :disabled="!replyText.trim()" @click="reply">发送回复</button>
+                  <button class="btn btn-primary btn-sm" :disabled="!replyText.trim()" v-perm="'ticket:handle'" @click="reply">发送回复</button>
                   <button class="btn btn-sm" @click="toggleQuickReplies">📋 话术</button>
-                  <button class="btn btn-sm" @click="closeTicket">关闭工单</button>
+                  <button class="btn btn-sm" v-perm="'ticket:handle'" @click="closeTicket">关闭工单</button>
                   <select v-model="transferTo" class="select" style="width:auto;">
                     <option :value="0">转交给客服...</option>
                     <option v-for="m in members" :key="m.id" :value="m.id">{{ m.nickname || m.username }}</option>
                   </select>
-                  <button class="btn btn-sm" :disabled="!transferTo" @click="transferTicket">转交</button>
+                  <button class="btn btn-sm" :disabled="!transferTo" v-perm="'ticket:handle'" @click="transferTicket">转交</button>
                   <select v-model="newPriority" class="select" style="width:auto;margin-left:auto;" @change="setPriority">
                     <option :value="0">低优先级</option>
                     <option :value="1">中优先级</option>

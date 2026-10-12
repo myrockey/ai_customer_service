@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <div class="notice-bar">
       💡 {{ platform ? '平台默认模型配置：即平台管理员租户（t_admin）的模型配置，各租户选择「跟随平台」时使用。Key 存于 t_admin 租户配置，AES 加密入库。' : '租户模型配置（BYOK）：可跟随平台默认，也可配置租户自有的模型 API Key（Key 存于本租户配置，AES 加密入库）。修改保存后 Agent 会自动重建，新会话立即生效。' }}
@@ -38,7 +38,7 @@
           <input v-model="chat.api_key" type="password" class="input mono" :placeholder="chat.api_key_configured ? '已配置，留空保持' : 'sk-...'" />
           <div v-if="chat.api_key_configured" class="key-row">
             <span class="key-tag">✓ 已配置 {{ chat.api_key_masked || '' }}</span>
-            <button class="btn btn-sm" type="button" @click="clearChatKey">清除</button>
+            <button class="btn btn-sm" type="button" v-perm="'model:edit'" @click="clearChatKey">清除</button>
           </div>
           <span v-else class="key-status warn">未配置（租户自定义必须填写 Key）</span>
         </label>
@@ -101,7 +101,7 @@
           <input v-model="emb.api_key" type="password" class="input mono" :placeholder="emb.api_key_configured ? '已配置，留空保持' : 'sk-...'" />
           <div v-if="emb.api_key_configured" class="key-row">
             <span class="key-tag">✓ 已配置 {{ emb.api_key_masked || '' }}</span>
-            <button class="btn btn-sm" type="button" @click="clearEmbKey">清除</button>
+            <button class="btn btn-sm" type="button" v-perm="'model:edit'" @click="clearEmbKey">清除</button>
           </div>
           <span v-else class="key-status warn">未配置（租户自定义必须填写 Key）</span>
         </label>
@@ -125,7 +125,7 @@
     </div>
 
     <div style="margin-top:18px;">
-      <button class="btn btn-primary" :disabled="saving" @click="save">{{ saving ? '保存中...' : '保存配置' }}</button>
+      <button class="btn btn-primary" :disabled="saving" v-perm="'model:edit'" @click="save">{{ saving ? '保存中...' : '保存配置' }}</button>
       <span class="text-3" style="font-size:12px;margin-left:12px;">{{ platform ? '平台默认租户: t_admin' : '当前租户: ' + session.tenant_id }}</span>
     </div>
   </div>

@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <div class="head-row">
       <div class="filters">
@@ -13,7 +13,7 @@
         <button class="btn btn-sm" @click="reset">重置</button>
       </div>
       <div style="display:flex;align-items:center;gap:10px;">
-        <button class="btn btn-primary btn-sm" @click="openCreate">+ 新建 Prompt</button>
+        <button class="btn btn-primary btn-sm" v-perm="'prompt:add'" @click="openCreate">+ 新建 Prompt</button>
       </div>
     </div>
     <div class="grid2" style="padding:10px;"><span v-if="scope === 'platform'" class="text-3" style="font-size:12px;color:#000;">未配置自有 Prompt 的租户将使用此平台级（全局）Prompt</span></div>
@@ -30,10 +30,10 @@
           <span class="text-2" style="font-size:12px;">{{ fmt(row.updated_at) }}</span>
         </template>
         <template #cell-actions="{ row }">
-          <button class="btn btn-sm" @click="openEdit(row)">编辑</button>
-          <button v-if="!row.is_active" class="btn btn-sm btn-primary" @click="activate(row)">激活</button>
+          <button class="btn btn-sm" v-perm="'prompt:edit'" @click="openEdit(row)">编辑</button>
+          <button v-if="!row.is_active" class="btn btn-sm btn-primary" v-perm="'prompt:edit'" @click="activate(row)">激活</button>
           <button class="btn btn-sm" @click="showVersions(row)">版本</button>
-          <button class="btn btn-sm btn-danger" @click="remove(row)">删除</button>
+          <button class="btn btn-sm btn-danger" v-perm="'prompt:remove'" @click="remove(row)">删除</button>
         </template>
       </DataTable>
       <Pagination :total="total" :page="page" :size="size" @change="onPage" />
@@ -73,7 +73,7 @@
             <b>v{{ v.version }}</b>
             <span class="text-3" style="font-size:12px;">{{ fmt(v.created_at) }}</span>
             <span class="text-3" style="font-size:12px;">{{ v.remark || '' }}</span>
-            <button class="btn btn-sm" style="margin-left:auto;" @click="rollback(v)">回滚</button>
+            <button class="btn btn-sm" style="margin-left:auto;" v-perm="'prompt:edit'" @click="rollback(v)">回滚</button>
           </div>
           <div class="ver-content">{{ v.content }}</div>
         </div>

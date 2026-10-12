@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <div class="head-row">
       <div class="filters">
@@ -6,7 +6,7 @@
         <button class="btn btn-sm btn-primary" @click="search">查询</button>
         <button class="btn btn-sm" @click="resetFilter">重置</button>
       </div>
-      <button class="btn btn-primary btn-sm" @click="openCreate">+ 新建角色</button>
+      <button class="btn btn-primary btn-sm" v-perm="'role:add'" @click="openCreate">+ 新建角色</button>
     </div>
 
     <div class="card" style="margin-top:16px;">
@@ -23,8 +23,8 @@
           <span class="text-2">{{ row.description || '-' }}</span>
         </template>
         <template #cell-actions="{ row }">
-          <button class="btn btn-sm" @click="openEdit(row)">编辑权限</button>
-          <button class="btn btn-sm btn-danger" @click="del(row)">删除</button>
+          <button class="btn btn-sm" v-perm="'role:edit'" @click="openEdit(row)">编辑权限</button>
+          <button class="btn btn-sm btn-danger" v-perm="'role:remove'" @click="del(row)">删除</button>
         </template>
       </DataTable>
     </div>

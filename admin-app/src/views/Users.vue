@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <div class="head-row">
       <div class="filters">
@@ -15,7 +15,7 @@
         <button class="btn btn-sm btn-primary" @click="search">查询</button>
         <button class="btn btn-sm" @click="resetFilter">重置</button>
       </div>
-      <button class="btn btn-primary btn-sm" @click="openAdd">+ 添加成员</button>
+      <button class="btn btn-primary btn-sm" v-perm="'member:add'" @click="openAdd">+ 添加成员</button>
     </div>
 
     <div class="card" style="margin-top:16px;">
@@ -48,12 +48,12 @@
           <span class="text-2" style="font-size:12px;">{{ fmtTime(row.created_at) }}</span>
         </template>
         <template #cell-actions="{ row }">
-          <button class="btn btn-sm" @click="openEdit(row)">编辑</button>
-          <button class="btn btn-sm" @click="resetPwd(row)">重置密码</button>
-          <button class="btn btn-sm" :class="row.status === 1 ? '' : 'btn-primary'" @click="toggleStatus(row)">
+          <button class="btn btn-sm" v-perm="'member:edit'" @click="openEdit(row)">编辑</button>
+          <button class="btn btn-sm" v-perm="'member:edit'" @click="resetPwd(row)">重置密码</button>
+          <button class="btn btn-sm" :class="row.status === 1 ? '' : 'btn-primary'" v-perm="'member:edit'" @click="toggleStatus(row)">
             {{ row.status === 1 ? '禁用' : '启用' }}
           </button>
-          <button class="btn btn-sm btn-danger" @click="del(row)">删除</button>
+          <button class="btn btn-sm btn-danger" v-perm="'member:remove'" @click="del(row)">删除</button>
         </template>
       </DataTable>
     </div>
